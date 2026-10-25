@@ -42,6 +42,27 @@ async function api(user, action, extra = {}) {
   }
   return { status: res.status, body };
 }
+async function chat(user, bookingId, message) {
+  const headers = {
+    Connection: "close",
+    ...(user
+      ? {
+          "oai-authenticated-user-id": user,
+          "oai-authenticated-user-email": `${user}@example.test`,
+        }
+      : {}),
+    ...(message ? { "Content-Type": "application/json" } : {}),
+  };
+  const res = await fetch(
+    `${base}/api/messages${message ? "" : `?bookingId=${encodeURIComponent(bookingId)}`}`,
+    {
+      method: message ? "POST" : "GET",
+      headers,
+      body: message ? JSON.stringify({ bookingId, ...message }) : undefined,
+    },
+  );
+  return { status: res.status, body: await res.json() };
+}
 const ride = {
   origin: `${prefix} Campus`,
   destination: "Test Airport",
@@ -117,6 +138,36 @@ state = (await api(driver)).body;
 const a = state.bookings.find((b) => b.rideId === r.id && b.riderId === riderA);
 const b = state.bookings.find((b) => b.rideId === r.id && b.riderId === riderB);
 eq(
+  (await chat(null, a.id)).status,
+  401,
+  "anonymous conversation reads rejected",
+);
+eq(
+  (await chat(stranger, a.id)).status,
+  403,
+  "unrelated conversation reads rejected",
+);
+eq(
+  (await chat(riderB, a.id)).status,
+  403,
+  "another rider on same ride cannot read private thread",
+);
+eq(
+  (await chat(driver, a.id)).body.canSend,
+  false,
+  "pending request is not writable",
+);
+eq(
+  (
+    await chat(riderA, a.id, {
+      clientId: crypto.randomUUID(),
+      body: "Too early",
+    })
+  ).status,
+  409,
+  "pending rider cannot send messages",
+);
+eq(
   (await api(stranger)).body.bookings.length,
   0,
   "unrelated users cannot read bookings",
@@ -164,11 +215,129 @@ eq(
 const winner = state.bookings.find(
   (x) => x.rideId === r.id && x.status === "accepted",
 );
+const messageId = crypto.randomUUID();
+eq(
+  (await chat(winner.riderId, winner.id)).body.canSend,
+  true,
+  "confirmed rider can message",
+);
+eq(
+  (
+    await chat(winner.riderId, winner.id, {
+      clientId: crypto.randomUUID(),
+      body: "   ",
+    })
+  ).status,
+  400,
+  "empty message rejected",
+);
+eq(
+  (
+    await chat(driver, winner.id, {
+      clientId: crypto.randomUUID(),
+      body: "x".repeat(2001),
+    })
+  ).status,
+  400,
+  "oversize message rejected",
+);
+eq(
+  (
+    await chat(stranger, winner.id, {
+      clientId: crypto.randomUUID(),
+      body: "Intrusion",
+    })
+  ).status,
+  409,
+  "outsider cannot write conversation",
+);
+eq(
+  (
+    await chat(winner.riderId, winner.id, {
+      clientId: messageId,
+      body: "Meet at the east gate?",
+      senderId: driver,
+    })
+  ).status,
+  201,
+  "rider can send message",
+);
+eq(
+  (
+    await chat(winner.riderId, winner.id, {
+      clientId: messageId,
+      body: "Meet at the east gate?",
+    })
+  ).status,
+  200,
+  "exact message retry is idempotent",
+);
+eq(
+  (
+    await chat(winner.riderId, winner.id, {
+      clientId: messageId,
+      body: "Different text",
+    })
+  ).status,
+  409,
+  "same id cannot overwrite message",
+);
+eq(
+  (await chat(driver, winner.id)).body.messages[0].senderId,
+  winner.riderId,
+  "sender identity derives from authenticated account",
+);
+const parallelId = crypto.randomUUID();
+const replies = await Promise.all([
+  chat(driver, winner.id, {
+    clientId: parallelId,
+    body: "Yes, see you there!",
+  }),
+  chat(driver, winner.id, {
+    clientId: parallelId,
+    body: "Yes, see you there!",
+  }),
+]);
+eq(
+  replies.filter((r) => r.status === 201).length,
+  1,
+  "parallel retry creates one message",
+);
+eq(
+  replies.filter((r) => r.status === 200).length,
+  1,
+  "parallel duplicate is acknowledged",
+);
+eq(
+  (await chat(driver, winner.id)).body.messages.length,
+  2,
+  "conversation contains no duplicates",
+);
 eq(
   (await api(winner.riderId, { action: "cancelBooking", bookingId: winner.id }))
     .status,
   200,
   "rider can release confirmed seat",
+);
+eq(
+  (await chat(winner.riderId, winner.id)).body.canSend,
+  false,
+  "seat cancellation closes messaging",
+);
+eq(
+  (await chat(driver, winner.id)).body.messages.length,
+  2,
+  "cancelled conversation history is preserved",
+);
+eq(
+  (
+    await chat(driver, winner.id, {
+      clientId: crypto.randomUUID(),
+      body: "After cancellation",
+    })
+  ).status,
+  409,
+  "cancelled seat cannot receive new messages",
 );
 state = (await api(driver)).body;
 eq(
@@ -208,6 +377,11 @@ eq(
   "ride cancellation cascades to active requests",
 );
 eq(
+  (await chat(driver, pending.id)).body.canSend,
+  false,
+  "ride cancellation closes remaining conversations",
+);
+eq(
   (await api(stranger)).body.rides.some((x) => x.id === r.id),
   false,
   "cancelled rides disappear from public feed",
@@ -218,5 +392,5 @@ eq(
   "cancelled ride cannot be booked",
 );
 console.log(
-  `PASS: ${assertions} API assertions (authentication, ownership, validation, privacy, duplicate requests, parallel capacity, cancellations).`,
+  `PASS: ${assertions} API assertions (authentication, ownership, validation, private messaging, idempotency, parallel capacity, cancellations).`,
 );

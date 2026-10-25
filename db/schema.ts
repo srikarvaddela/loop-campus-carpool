@@ -37,3 +37,18 @@ export const bookings = sqliteTable(
   },
   (t) => [uniqueIndex("one_booking_per_rider").on(t.rideId, t.riderId)],
 );
+
+export const messages = sqliteTable(
+  "messages",
+  {
+    id: text("id").primaryKey(),
+    bookingId: text("booking_id")
+      .notNull()
+      .references(() => bookings.id),
+    senderId: text("sender_id").notNull(),
+    senderName: text("sender_name").notNull(),
+    body: text("body").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [index("messages_booking_created_idx").on(t.bookingId, t.createdAt)],
+);

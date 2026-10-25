@@ -26,8 +26,10 @@ import {
   LoaderCircle,
   LogIn,
   SlidersHorizontal,
+  MessageCircle,
 } from "lucide-react";
-import type { Booking, Ride, Snapshot } from "../lib/types";
+import type { Booking, Ride, Snapshot, Message } from "../lib/types";
+import TripChat from "./trip-chat";
 import { demoSnapshot } from "../lib/demo";
 import { actionSchema } from "../lib/validation";
 
@@ -36,6 +38,7 @@ type Modal =
   | { type: "post" }
   | { type: "ride"; id: string }
   | { type: "help" }
+  | { type: "chat"; bookingId: string }
   | { type: "confirm"; action: Record<string, unknown>; message: string }
   | null;
 const empty: Snapshot = { rides: [], bookings: [], user: null };
@@ -164,8 +167,18 @@ export default function Carpool() {
   const [category, setCategory] = useState("All rides");
   const [sort, setSort] = useState("soonest");
   const [tripTab, setTripTab] = useState("riding");
+  const [demoMessages, setDemoMessages] = useState<Record<string, Message[]>>(
+    {},
+  );
   const s = mode === "demo" ? demo : live;
   const uid = s.user?.userId;
+  const chatBooking =
+    modal?.type === "chat"
+      ? s.bookings.find((b) => b.id === modal.bookingId)
+      : undefined;
+  const chatRide = chatBooking
+    ? s.rides.find((r) => r.id === chatBooking.rideId)
+    : undefined;
   const requests = s.bookings.filter(
     (b) =>
       b.status === "pending" &&
@@ -815,6 +828,25 @@ export default function Carpool() {
                                 </span>
                               </div>
                               <div className="trip-actions">
+                                {["accepted", "cancelled"].includes(
+                                  b.status,
+                                ) && (
+                                  <button
+                                    className="text-button"
+                                    onClick={() => {
+                                      setError("");
+                                      setModal({
+                                        type: "chat",
+                                        bookingId: b.id,
+                                      });
+                                    }}
+                                  >
+                                    <MessageCircle size={14} />
+                                    {b.status === "accepted"
+                                      ? "Message driver"
+                                      : "Conversation"}
+                                  </button>
+                                )}
                                 <button
                                   className="text-button"
                                   onClick={() =>
@@ -1024,7 +1056,9 @@ export default function Carpool() {
                 ? "Your ride, in detail"
                 : modal.type === "help"
                   ? "A little about Loop"
-                  : "One quick check"
+                  : modal.type === "chat"
+                    ? "Trip messages"
+                    : "One quick check"
           }
         >
           {error && (
@@ -1037,6 +1071,37 @@ export default function Carpool() {
               <Sparkles size={14} />
               Demo mode · changes reset when you reload.
             </div>
+          )}
+          {modal.type === "chat" && chatBooking && chatRide && uid && (
+            <TripChat
+              key={chatBooking.id + mode}
+              bookingId={chatBooking.id}
+              userId={uid}
+              title={`${endName(chatRide.origin)} → ${endName(chatRide.destination)}`}
+              partner={
+                chatRide.driverId === uid
+                  ? chatBooking.riderName
+                  : chatRide.driverName
+              }
+              demo={
+                mode === "demo"
+                  ? {
+                      messages: demoMessages[chatBooking.id] || [],
+                      canSend:
+                        chatBooking.status === "accepted" &&
+                        chatRide.status === "active",
+                      send: (m) =>
+                        setDemoMessages((previous) => ({
+                          ...previous,
+                          [chatBooking.id]: [
+                            ...(previous[chatBooking.id] || []),
+                            m,
+                          ],
+                        })),
+                    }
+                  : undefined
+              }
+            />
           )}
           {modal.type === "post" &&
             (mode === "live" && !uid ? (
@@ -1161,6 +1226,59 @@ export default function Carpool() {
                 A request isn’t a confirmed seat until the driver accepts. Loop
                 doesn’t process payments or verify student status.
               </p>
+              {selected.driverId === uid &&
+                s.bookings.some(
+                  (b) =>
+                    b.rideId === selected.id &&
+                    ["accepted", "cancelled"].includes(b.status),
+                ) && (
+                  <div className="passenger-panel">
+                    <h3 className="detail-label">Rider conversations</h3>
+                    {s.bookings
+                      .filter(
+                        (b) =>
+                          b.rideId === selected.id &&
+                          ["accepted", "cancelled"].includes(b.status),
+                      )
+                      .map((b) => (
+                        <div className="passenger-row" key={b.id}>
+                          <span className="avatar sage">
+                            {initials(b.riderName)}
+                          </span>
+                          <div>
+                            <strong>{b.riderName}</strong>
+                            <span>
+                              {b.status === "accepted"
+                                ? "Seat confirmed"
+                                : "Cancelled"}
+                            </span>
+                          </div>
+                          <button
+                            className="secondary"
+                            onClick={() => {
+                              setError("");
+                              setModal({ type: "chat", bookingId: b.id });
+                            }}
+                          >
+                            <MessageCircle size={14} />
+                            Message
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              {myBooking && myBooking.status === "accepted" && (
+                <button
+                  className="secondary full message-driver"
+                  onClick={() => {
+                    setError("");
+                    setModal({ type: "chat", bookingId: myBooking.id });
+                  }}
+                >
+                  <MessageCircle size={16} />
+                  Message your driver
+                </button>
+              )}
             </>
           )}
           {modal.type === "confirm" && (
@@ -1203,7 +1321,7 @@ export default function Carpool() {
                 [
                   CarFront,
                   "Make the journey",
-                  "Agree on pickup and payment directly before you travel.",
+                  "Once your seat is confirmed, message your driver to agree on pickup and payment.",
                 ],
               ].map(([Icon, title, text]) => {
                 const I = Icon as typeof Search;
@@ -1224,13 +1342,15 @@ export default function Carpool() {
                 <p>
                   This is an early version. Accounts use ChatGPT sign-in;
                   student identity, driving credentials, and insurance are not
-                  verified. No messaging or payments are built in yet.
+                  verified. Trip messaging opens after seat confirmation.
+                  Payments are arranged outside Loop.
                 </p>
               </div>
               <button
                 className="secondary full"
                 onClick={() => {
                   setDemo(demoSnapshot());
+                  setDemoMessages({});
                   switchMode("demo");
                   setNotice("Demo reset. Try requesting or approving a seat.");
                 }}

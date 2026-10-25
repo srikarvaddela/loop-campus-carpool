@@ -22,6 +22,15 @@ export type Booking = {
   createdAt: string;
 };
 export type User = { userId: string; displayName: string };
+export type Message = {
+  id: string;
+  bookingId: string;
+  senderId: string;
+  senderName: string;
+  body: string;
+  createdAt: string;
+};
+export type Conversation = { messages: Message[]; canSend: boolean };
 export type Snapshot = {
   rides: Ride[];
   bookings: Booking[];
