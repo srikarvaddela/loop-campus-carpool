@@ -27,9 +27,19 @@ import {
   LogIn,
   SlidersHorizontal,
   MessageCircle,
+  Flag,
+  GraduationCap,
 } from "lucide-react";
-import type { Booking, Ride, Snapshot, Message } from "../lib/types";
+import type {
+  Booking,
+  Ride,
+  Snapshot,
+  Message,
+  Profile,
+  Report,
+} from "../lib/types";
 import TripChat from "./trip-chat";
+import { ProfileForm, ReportForm, ReportsPanel } from "./community-panels";
 import { demoSnapshot } from "../lib/demo";
 import { actionSchema } from "../lib/validation";
 
@@ -38,6 +48,9 @@ type Modal =
   | { type: "post" }
   | { type: "ride"; id: string }
   | { type: "help" }
+  | { type: "profile" }
+  | { type: "report"; rideId: string }
+  | { type: "reports" }
   | { type: "chat"; bookingId: string }
   | { type: "confirm"; action: Record<string, unknown>; message: string }
   | null;
@@ -167,6 +180,29 @@ export default function Carpool() {
   const [category, setCategory] = useState("All rides");
   const [sort, setSort] = useState("soonest");
   const [tripTab, setTripTab] = useState("riding");
+  const [campusFilter, setCampusFilter] = useState("");
+  const [afterProfile, setAfterProfile] = useState<
+    "post" | { rideId: string } | null
+  >(null);
+  const [demoReports, setDemoReports] = useState<
+    (Report & { isMine?: boolean })[]
+  >(() => [
+    {
+      id: "sample-report",
+      rideId: "demo-4",
+      reason: "Misleading listing",
+      details:
+        "This is a fictional report to demonstrate reviewing a concern. The listed pickup point and the driver’s note disagree.",
+      status: "open",
+      resolution: null,
+      resolutionNotes: null,
+      createdAt: new Date().toISOString(),
+      origin: "Campus · West Residence",
+      destination: "Chicago · Downtown",
+      driverName: "Alex Rivera",
+      isMine: false,
+    },
+  ]);
   const [demoMessages, setDemoMessages] = useState<Record<string, Message[]>>(
     {},
   );
@@ -224,6 +260,7 @@ export default function Carpool() {
     setDestination("");
     setDate("");
     setCategory("All rides");
+    setCampusFilter("");
     setError("");
     if (next === "live") refresh().catch((e) => setError(e.message));
   };
@@ -246,7 +283,8 @@ export default function Carpool() {
             ...parsed.data.ride,
             id: crypto.randomUUID(),
             driverId: "demo-you",
-            driverName: "You",
+            driverName: demo.profile?.displayName || "You",
+            campus: demo.profile?.campus || "Example University",
             status: "active",
             createdAt: now,
             accepted: 0,
@@ -266,7 +304,7 @@ export default function Carpool() {
               id: crypto.randomUUID(),
               rideId: r.id,
               riderId: "demo-you",
-              riderName: "You",
+              riderName: demo.profile?.displayName || "You",
               status: "pending",
               createdAt: now,
             });
@@ -324,6 +362,10 @@ export default function Carpool() {
   const matched = s.rides
     .filter(
       (r) =>
+        !campusFilter || r.campus.toLowerCase() === campusFilter.toLowerCase(),
+    )
+    .filter(
+      (r) =>
         r.status === "active" &&
         Date.parse(r.departure) > Date.now() &&
         r.driverId !== uid,
@@ -359,6 +401,7 @@ export default function Carpool() {
     filters.destination ||
     filters.date ||
     filters.seats !== 1 ||
+    campusFilter ||
     category !== "All rides"
   );
   const clearFilters = () => {
@@ -368,11 +411,72 @@ export default function Carpool() {
     setSeats("1");
     setFilters({ origin: "", destination: "", date: "", seats: 1 });
     setCategory("All rides");
+    setCampusFilter("");
   };
   const openPost = () => {
     setError("");
+    if (mode === "live" && uid && !s.profile) {
+      setAfterProfile("post");
+      setModal({ type: "profile" });
+      return;
+    }
     setModal({ type: "post" });
   };
+  const reportRide =
+    modal?.type === "report"
+      ? s.rides.find((r) => r.id === modal.rideId)
+      : undefined;
+  const campusOptions = Array.from(
+    new Set(s.rides.map((r) => r.campus).filter(Boolean)),
+  ).sort();
+  async function saveProfile(p: Profile) {
+    if (mode === "demo")
+      setDemo((previous) => ({
+        ...previous,
+        profile: p,
+        user: previous.user
+          ? { ...previous.user, displayName: p.displayName }
+          : null,
+      }));
+    else await refresh();
+    const next = afterProfile;
+    setAfterProfile(null);
+    setNotice("Profile saved" + (mode === "demo" ? " · Demo only" : ""));
+    if (next === "post") setModal({ type: "post" });
+    else if (next)
+      await mutate(
+        { action: "request", rideId: next.rideId },
+        "Seat requested",
+      );
+    else setModal(null);
+  }
+  function demoResolve(
+    id: string,
+    resolution: "hide" | "dismiss",
+    notes: string,
+  ) {
+    const report = demoReports.find((r) => r.id === id);
+    setDemoReports((previous) =>
+      previous.map((r) =>
+        r.id === id
+          ? { ...r, status: "resolved", resolution, resolutionNotes: notes }
+          : r,
+      ),
+    );
+    if (resolution === "hide" && report)
+      setDemo((previous) => ({
+        ...previous,
+        rides: previous.rides.map((r) =>
+          r.id === report.rideId ? { ...r, status: "removed", accepted: 0 } : r,
+        ),
+        bookings: previous.bookings.map((b) =>
+          b.rideId === report.rideId &&
+          ["pending", "accepted"].includes(b.status)
+            ? { ...b, status: "cancelled" }
+            : b,
+        ),
+      }));
+  }
   return (
     <div className="app-shell">
       <aside className={"sidebar " + (menu ? "is-open" : "")}>
@@ -415,6 +519,17 @@ export default function Carpool() {
             {requests.length > 0 && (
               <span className="nav-count">{requests.length}</span>
             )}
+          </button>
+          <button
+            className="nav-item"
+            onClick={() => {
+              setMenu(false);
+              setError("");
+              setModal({ type: "reports" });
+            }}
+          >
+            <Flag size={20} />
+            {s.isModerator ? "Reports & review" : "My reports"}
           </button>
         </nav>
         <div className="sidebar-note">
@@ -470,9 +585,19 @@ export default function Carpool() {
               </button>
             </div>
             <span className="topbar-divider" />
-            <span className="avatar account">
-              {initials(s.user?.displayName || "You")}
-            </span>
+            <button
+              className="account-control"
+              aria-label="Your campus profile"
+              onClick={() => {
+                setError("");
+                setAfterProfile(null);
+                setModal({ type: "profile" });
+              }}
+            >
+              <span className="avatar account">
+                {initials(s.user?.displayName || "You")}
+              </span>
+            </button>
             <span className="account-name">
               {mode === "demo"
                 ? "Try Loop"
@@ -696,6 +821,21 @@ export default function Carpool() {
                     </select>
                     <ChevronDown size={14} />
                   </label>
+                </div>
+                <div className="campus-filter">
+                  <GraduationCap size={15} />
+                  <label htmlFor="campus-filter">Campus</label>
+                  <select
+                    id="campus-filter"
+                    value={campusFilter}
+                    onChange={(e) => setCampusFilter(e.target.value)}
+                  >
+                    <option value="">All campuses</option>
+                    {campusOptions.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                  <span>Self-reported membership</span>
                 </div>
                 <div className="result-line">
                   <span>
@@ -1058,7 +1198,13 @@ export default function Carpool() {
                   ? "A little about Loop"
                   : modal.type === "chat"
                     ? "Trip messages"
-                    : "One quick check"
+                    : modal.type === "profile"
+                      ? "Your campus profile"
+                      : modal.type === "report"
+                        ? "Report this ride"
+                        : modal.type === "reports"
+                          ? "Reports & review"
+                          : "One quick check"
           }
         >
           {error && (
@@ -1066,6 +1212,77 @@ export default function Carpool() {
               {error}
             </div>
           )}
+          {modal.type === "profile" &&
+            (mode === "live" && !uid ? (
+              <SignInPrompt />
+            ) : (
+              <ProfileForm
+                profile={s.profile || null}
+                demo={mode === "demo"}
+                onSaved={saveProfile}
+              />
+            ))}
+          {modal.type === "report" &&
+            reportRide &&
+            (mode === "live" && !uid ? (
+              <SignInPrompt />
+            ) : (
+              <ReportForm
+                destination={reportRide.destination}
+                rideId={reportRide.id}
+                demo={mode === "demo"}
+                onSubmit={(reason, details) => {
+                  if (
+                    demoReports.some(
+                      (r) => r.rideId === reportRide.id && r.isMine,
+                    )
+                  )
+                    throw new Error(
+                      "You already reported this ride. Track its status in My reports.",
+                    );
+                  setDemoReports((previous) => [
+                    {
+                      id: crypto.randomUUID(),
+                      rideId: reportRide.id,
+                      reason,
+                      details,
+                      status: "open",
+                      resolution: null,
+                      resolutionNotes: null,
+                      createdAt: new Date().toISOString(),
+                      origin: reportRide.origin,
+                      destination: reportRide.destination,
+                      driverName: reportRide.driverName,
+                      isMine: true,
+                    },
+                    ...previous,
+                  ]);
+                }}
+                onSaved={() => {
+                  setModal(null);
+                  setNotice(
+                    "Report submitted. Track it in My reports." +
+                      (mode === "demo" ? " · Demo only" : ""),
+                  );
+                }}
+              />
+            ))}
+          {modal.type === "reports" &&
+            (mode === "live" && !uid ? (
+              <SignInPrompt />
+            ) : (
+              <ReportsPanel
+                isModerator={!!s.isModerator}
+                demo={
+                  mode === "demo"
+                    ? { reports: demoReports, resolve: demoResolve }
+                    : undefined
+                }
+                onChanged={async () => {
+                  if (mode === "live") await refresh();
+                }}
+              />
+            ))}
           {mode === "demo" && modal.type !== "help" && (
             <div className="modal-demo">
               <Sparkles size={14} />
@@ -1167,6 +1384,11 @@ export default function Carpool() {
                   <p>Driving this trip</p>
                 </div>
               </div>
+              <div className="detail-campus">
+                <GraduationCap size={16} />
+                {selected.campus || "Campus not set"}
+                <span>Self-reported</span>
+              </div>
               <h3 className="detail-label">A note from your driver</h3>
               <p className="driver-note">
                 {selected.notes ||
@@ -1176,8 +1398,10 @@ export default function Carpool() {
               Date.parse(selected.departure) <= Date.now() ? (
                 <div className="modal-demo">
                   This ride is{" "}
-                  {selected.status === "cancelled"
-                    ? "cancelled"
+                  {selected.status !== "active"
+                    ? selected.status === "removed"
+                      ? "removed by a moderator"
+                      : "cancelled"
                     : "in the past"}
                   .
                 </div>
@@ -1206,10 +1430,13 @@ export default function Carpool() {
                   className="primary full"
                   disabled={busy || selected.accepted >= selected.seats}
                   onClick={() =>
-                    mutate(
-                      { action: "request", rideId: selected.id },
-                      "Seat requested",
-                    )
+                    mode === "live" && !s.profile
+                      ? (setAfterProfile({ rideId: selected.id }),
+                        setModal({ type: "profile" }))
+                      : mutate(
+                          { action: "request", rideId: selected.id },
+                          "Seat requested",
+                        )
                   }
                 >
                   {busy ? (
@@ -1226,6 +1453,18 @@ export default function Carpool() {
                 A request isn’t a confirmed seat until the driver accepts. Loop
                 doesn’t process payments or verify student status.
               </p>
+              {selected.driverId !== uid && (
+                <button
+                  className="report-link"
+                  onClick={() => {
+                    setError("");
+                    setModal({ type: "report", rideId: selected.id });
+                  }}
+                >
+                  <Flag size={13} />
+                  Report this ride
+                </button>
+              )}
               {selected.driverId === uid &&
                 s.bookings.some(
                   (b) =>
@@ -1351,6 +1590,7 @@ export default function Carpool() {
                 onClick={() => {
                   setDemo(demoSnapshot());
                   setDemoMessages({});
+                  setDemoReports([]);
                   switchMode("demo");
                   setNotice("Demo reset. Try requesting or approving a seat.");
                 }}
@@ -1425,7 +1665,7 @@ function RideCard({
           </span>
           <div>
             <strong>{r.driverName}</strong>
-            <span>Driver</span>
+            <span>{r.campus || "Campus not set"}</span>
           </div>
         </div>
         <div className="card-price">

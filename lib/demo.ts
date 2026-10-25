@@ -89,6 +89,8 @@ export function demoSnapshot(): Snapshot {
   ] as const;
   return {
     user: { userId: "demo-you", displayName: "You" },
+    profile: { displayName: "You", campus: "Example University" },
+    isModerator: true,
     rides: entries.map(
       ([
         id,
@@ -104,6 +106,7 @@ export function demoSnapshot(): Snapshot {
         notes,
       ]) => ({
         id,
+        campus: "Example University",
         driverId,
         driverName,
         origin,

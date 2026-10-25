@@ -12,6 +12,7 @@ export const rides = sqliteTable(
     driverId: text("driver_id").notNull(),
     driverName: text("driver_name").notNull(),
     origin: text("origin").notNull(),
+    campus: text("campus").notNull().default(""),
     destination: text("destination").notNull(),
     departure: text("departure").notNull(),
     seats: integer("seats").notNull(),
@@ -51,4 +52,34 @@ export const messages = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (t) => [index("messages_booking_created_idx").on(t.bookingId, t.createdAt)],
+);
+
+export const profiles = sqliteTable("profiles", {
+  userId: text("user_id").primaryKey(),
+  displayName: text("display_name").notNull(),
+  campus: text("campus").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const reports = sqliteTable(
+  "reports",
+  {
+    id: text("id").primaryKey(),
+    rideId: text("ride_id")
+      .notNull()
+      .references(() => rides.id),
+    reporterId: text("reporter_id").notNull(),
+    reason: text("reason").notNull(),
+    details: text("details").notNull(),
+    status: text("status").notNull().default("open"),
+    resolution: text("resolution"),
+    moderatorId: text("moderator_id"),
+    resolutionNotes: text("resolution_notes"),
+    createdAt: text("created_at").notNull(),
+    resolvedAt: text("resolved_at"),
+  },
+  (t) => [
+    uniqueIndex("one_report_per_user_ride").on(t.rideId, t.reporterId),
+    index("reports_status_created_idx").on(t.status, t.createdAt),
+  ],
 );

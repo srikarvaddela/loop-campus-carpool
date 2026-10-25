@@ -3,6 +3,7 @@ export type Ride = {
   driverId: string;
   driverName: string;
   origin: string;
+  campus: string;
   destination: string;
   departure: string;
   seats: number;
@@ -35,4 +36,20 @@ export type Snapshot = {
   rides: Ride[];
   bookings: Booking[];
   user: User | null;
+  profile?: Profile | null;
+  isModerator?: boolean;
+};
+export type Profile = { displayName: string; campus: string };
+export type Report = {
+  id: string;
+  rideId: string;
+  reason: string;
+  details: string;
+  status: string;
+  resolution: string | null;
+  resolutionNotes: string | null;
+  createdAt: string;
+  origin: string;
+  destination: string;
+  driverName: string;
 };

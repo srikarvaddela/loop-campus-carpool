@@ -1,6 +1,6 @@
 # Loop — campus carpool
 
-A campus ride-sharing application. Find rides, post a trip, request a seat, approve riders, and coordinate pickup in private trip conversations.
+A campus ride-sharing application. Create a campus profile, find rides, request a seat, coordinate pickup in private conversations, and report listing concerns for moderator review.
 
 [Source on GitHub](https://github.com/srikarvaddela/loop-campus-carpool) · [Hosted app](https://campus-carpool-luffy-1025.shoyo722.chatgpt.site)
 
@@ -27,6 +27,7 @@ npm ci
 npm run build
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_early_ego.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_yielding_unicorn.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_brave_garia.sql
 npm run dev -- --hostname 127.0.0.1
 ```
 
@@ -40,7 +41,7 @@ npm run build
 npm run test:api
 ```
 
-The test runner creates an isolated local database, applies every migration, starts the **built Worker**, runs the API suite using synthetic identities, and cleans up its own processes and test data. It refuses non-local targets. The 49 assertions cover unauthenticated writes, cross-origin requests, input validation, self-booking, duplicate requests, request privacy, ownership, parallel last-seat approvals, seat release, renewed requests, cancellation cascades, conversation access, and message retry idempotency. Never expose the local test Worker directly: production relies on Sites to validate identity headers.
+The test runner creates an isolated local database, applies every migration, starts the **built Worker**, runs the API suite using synthetic identities, and cleans up its own processes and test data. It refuses non-local targets. The 89 assertions cover authentication, validation, profile ownership, role escalation attempts, duplicate requests, booking privacy, parallel last-seat approvals, cancellations, private messages, idempotent retries, report privacy, and moderator removal cascading to bookings and messaging. Never expose the local test Worker directly: production relies on Sites to validate identity headers.
 
 GitHub Actions runs these same type, build, and integration checks on pushes to `main` and on pull requests. No hosted database or credentials are required for CI. These tests simulate separate accounts locally; a multi-account hosted pilot remains a separate validation step.
 
@@ -54,7 +55,21 @@ The API derives the acting user from trusted server identity, never from client 
 
 Each booking has its own conversation between that rider and the driver. Another rider on the same trip cannot read it. Sending is allowed only after driver approval and while the ride and booking are active. Cancellation makes the conversation read-only; participants retain history. Sender identity is always assigned server-side.
 
-Messages are plain text, limited to 2,000 characters, and polled every five seconds while a conversation is open. A client-generated UUID makes exact retries idempotent, including concurrent retries; reusing an ID for a different payload is rejected. The UI retains the draft on failed sends. Conversations display the latest 200 messages. There are no push notifications, unread counts, moderation tools, or end-to-end encryption.
+Messages are plain text, limited to 2,000 characters, and polled every five seconds while a conversation is open. A client-generated UUID makes exact retries idempotent, including concurrent retries; reusing an ID for a different payload is rejected. The UI retains the draft on failed sends. Conversations display the latest 200 messages. There are no push notifications, unread counts, message-level moderation tools, or end-to-end encryption.
+
+## Campus profiles
+
+Posting or requesting a live ride requires a profile with a display name and campus. Both are self-reported; there is no university-email or enrollment verification. The server derives profile ownership from authenticated identity, and copies the poster's campus and display name into a ride when created. Updating a profile does not rewrite historical ride listings. Campus filtering currently happens within the returned feed in the browser; it is not an access boundary.
+
+## Reporting and moderation
+
+Signed-in members may report another user's ride once, with a reason and explanation. Reports do not automatically remove rides. The author can see their own reports and resolution notes. The reported driver and unrelated members cannot read a report unless they independently have moderator permission. The UI does not display the reporter's identity to the moderator.
+
+Moderator access is opt-in runtime configuration through `LOOP_MODERATOR_IDS`, a comma-separated list of this Site's stable authenticated user IDs. The default is no moderators. The server ignores role/user-ID fields submitted in profile JSON; there is no first-user bootstrap or client-side admin switch. The hosted owner has been configured through Sites environment settings. No real moderator identity or credentials are stored in this repository.
+
+To configure a new deployment, sign in to that Site, read your own `/api/profile` response for its `userId`, set that value in the Site's `LOOP_MODERATOR_IDS` runtime variable, and redeploy. Site-scoped user IDs differ between deployments. The local integration runner injects `loop-test-moderator` only into its isolated test Worker.
+
+Moderators choose either dismissal or ride removal and provide an explanation. A transactional database batch records the decision, marks an active ride `removed`, and cancels its pending/confirmed bookings. Removed rides leave discovery and stop accepting new requests/messages; participants retain trip and conversation history. Already-resolved reports reject another decision. The queue returns up to 100 reports with open reports first. There is no report notification service, guaranteed response time, appeal/reinstatement flow, or message-level reporting yet.
 
 ## Source guide
 
@@ -62,6 +77,9 @@ Messages are plain text, limited to 2,000 characters, and polled every five seco
 - `app/globals.css`: responsive interface
 - `app/api/loop/route.ts`: real authenticated reads and writes
 - `app/trip-chat.tsx` and `app/api/messages/route.ts`: participant-only trip conversations
+- `app/community-panels.tsx`: campus profile, report submission, report tracking, and moderator review
+- `app/api/profile/route.ts`, `app/api/reports/route.ts`, and `app/api/moderation/route.ts`: authenticated community operations
+- `lib/moderation.ts`: server-side moderator allowlist
 - `lib/validation.ts`: input contracts
 - `lib/demo.ts`: fictional sample rides, separate from live records
 - `db/schema.ts` and `drizzle/`: schema and migrations
@@ -71,8 +89,8 @@ Messages are plain text, limited to 2,000 characters, and polled every five seco
 
 ## Next milestones before a student pilot
 
-1. Add campus selection and verified university email if required by the pilot.
-2. Add abuse reporting, account limits, and moderation.
+1. Connect an email delivery service for university-email verification if required by the pilot.
+2. Add account/action rate limits, message-level reporting, and an appeals process.
 3. Add pagination and server-side search beyond the current 500-ride feed cap.
 4. Add driver/rider browser end-to-end tests and hosted multi-account validation.
 5. Invite a small pilot group after explicitly configuring site access.

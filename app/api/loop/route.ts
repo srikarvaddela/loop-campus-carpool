@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "../../chatgpt-auth";
 import { actionSchema } from "../../../lib/validation";
+import { isModerator } from "../../../lib/moderation";
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -12,6 +13,12 @@ export async function GET() {
   try {
     const user = await getChatGPTUser();
     const db = database();
+    const profile = user
+      ? await db
+          .prepare("SELECT display_name,campus FROM profiles WHERE user_id=?")
+          .bind(user.userId)
+          .first<{ display_name: string; campus: string }>()
+      : null;
     const rideResult = await db
       .prepare(
         `SELECT r.*, (SELECT COUNT(*) FROM bookings b WHERE b.ride_id = r.id AND b.status = 'accepted') AS accepted FROM rides r WHERE (r.status = 'active' AND r.departure > ?) OR r.driver_id = ? OR EXISTS (SELECT 1 FROM bookings b WHERE b.ride_id = r.id AND b.rider_id = ?) ORDER BY r.departure LIMIT 500`,
@@ -31,6 +38,7 @@ export async function GET() {
       driverId: r.driver_id,
       driverName: r.driver_name,
       origin: r.origin,
+      campus: r.campus,
       destination: r.destination,
       departure: r.departure,
       seats: r.seats,
@@ -55,8 +63,15 @@ export async function GET() {
       rides,
       bookings,
       user: user
-        ? { userId: user.userId, displayName: user.displayName }
+        ? {
+            userId: user.userId,
+            displayName: profile?.display_name || user.displayName,
+          }
         : null,
+      profile: profile
+        ? { displayName: profile.display_name, campus: profile.campus }
+        : null,
+      isModerator: isModerator(user?.userId),
     });
   } catch (error) {
     console.error("Read failed", error);
@@ -91,20 +106,34 @@ export async function POST(req: Request) {
   const a = parsed.data;
   const now = new Date().toISOString();
   const uid = user.userId;
-  const name = user.fullName?.trim() || user.email.split("@")[0];
   try {
     const db = database();
+    const profile = ["post", "request"].includes(a.action)
+      ? await db
+          .prepare("SELECT display_name,campus FROM profiles WHERE user_id=?")
+          .bind(uid)
+          .first<{ display_name: string; campus: string }>()
+      : null;
+    if (["post", "request"].includes(a.action) && !profile)
+      return reply(
+        {
+          error:
+            "Add your name and campus in your profile before posting or requesting a ride.",
+        },
+        428,
+      );
     if (a.action === "post") {
       const r = a.ride;
       await db
         .prepare(
-          `INSERT INTO rides (id,driver_id,driver_name,origin,destination,departure,seats,price_cents,car,notes,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,'active',?)`,
+          `INSERT INTO rides (id,driver_id,driver_name,origin,campus,destination,departure,seats,price_cents,car,notes,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'active',?)`,
         )
         .bind(
           crypto.randomUUID(),
           uid,
-          name,
+          profile!.display_name,
           r.origin,
+          profile!.campus,
           r.destination,
           new Date(r.departure).toISOString(),
           r.seats,
@@ -123,7 +152,15 @@ export async function POST(req: Request) {
         .prepare(
           `INSERT INTO bookings (id,ride_id,rider_id,rider_name,status,created_at) SELECT ?,r.id,?,?,'pending',? FROM rides r WHERE r.id = ? AND r.status = 'active' AND r.departure > ? AND r.driver_id != ? AND (SELECT COUNT(*) FROM bookings WHERE ride_id = r.id AND status = 'accepted') < r.seats ON CONFLICT(ride_id,rider_id) DO UPDATE SET status = 'pending',created_at = excluded.created_at WHERE bookings.status IN ('cancelled','declined')`,
         )
-        .bind(crypto.randomUUID(), uid, name, now, a.rideId, now, uid)
+        .bind(
+          crypto.randomUUID(),
+          uid,
+          profile!.display_name,
+          now,
+          a.rideId,
+          now,
+          uid,
+        )
         .run();
     } else if (a.action === "accept") {
       // Capacity check and update are one serialized statement, preventing last-seat races.

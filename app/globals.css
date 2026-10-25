@@ -1930,3 +1930,204 @@ h2 > span,
     max-width: 90%;
   }
 }
+/* Campus profiles and reporting */
+.account-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: none;
+  padding: 0;
+  border-radius: 50%;
+}
+.campus-filter {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 17px;
+  color: #89977a;
+  font-size: 10px;
+}
+.campus-filter select {
+  background: #fff;
+  border: 1px solid var(--line);
+  color: #667f52;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 10px;
+  max-width: 230px;
+}
+.campus-filter > span {
+  margin-left: auto;
+  color: #a0aa92;
+  font-size: 9px;
+}
+.detail-campus {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: #6d845c;
+  margin: 12px 0 20px;
+}
+.detail-campus span {
+  margin-left: auto;
+  font-size: 9px;
+  color: #a3ab96;
+  background: #eff2e8;
+  padding: 5px 7px;
+  border-radius: 4px;
+}
+.report-link {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 0;
+  background: none;
+  color: #a27f61;
+  font-size: 10px;
+  margin-bottom: 9px;
+}
+.profile-intro {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #789066;
+  margin: 5px 0 12px;
+}
+.profile-intro p {
+  font-size: 12px;
+  line-height: 1.8;
+}
+.campus-disclosure {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #edf1e5;
+  padding: 15px;
+  border-radius: 8px;
+  color: #8b977b;
+  font-size: 11px;
+  line-height: 1.9;
+}
+.reports-intro {
+  font-size: 11px;
+  line-height: 1.8;
+  color: #929d84;
+  margin: 16px 0;
+}
+.report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+.report-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.report-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+.report-heading strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.report-heading .status {
+  margin-top: 0;
+}
+.report-route {
+  font-size: 10px;
+  color: #99a48c;
+  margin: 9px 0 15px;
+  line-height: 1.7;
+}
+.report-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.85;
+  color: #6d7f5e;
+}
+.report-pending {
+  font-size: 10px;
+  color: #a39763;
+  margin-top: 15px;
+}
+.resolution-note {
+  padding: 12px;
+  background: #edf3e5;
+  margin-top: 14px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: #7a9066;
+}
+.resolution-note p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 5px;
+}
+.review-form {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.review-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 10px;
+  color: #758965;
+}
+.review-form select,
+.review-form textarea {
+  padding: 10px;
+  border: 1px solid #dfe6d6;
+  border-radius: 6px;
+  color: var(--ink);
+  background: #fcfdf9;
+  font-size: 11px;
+  resize: vertical;
+}
+.review-form label.review-confirm {
+  flex-direction: row;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 10px;
+  line-height: 1.8;
+}
+.review-confirm input {
+  margin: 3px 0 0;
+  accent-color: var(--green);
+}
+.review-form .primary {
+  align-self: flex-end;
+  font-size: 11px;
+  padding: 9px 15px;
+}
+@media (max-width: 600px) {
+  .campus-filter {
+    flex-wrap: wrap;
+  }
+  .campus-filter > span {
+    margin-left: 0;
+    width: 100%;
+    font-size: 8px;
+  }
+  .campus-filter select {
+    flex: 1;
+  }
+  .detail-campus {
+    font-size: 10px;
+  }
+  .report-card {
+    padding: 15px;
+  }
+}

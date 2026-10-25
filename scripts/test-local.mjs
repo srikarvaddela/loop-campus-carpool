@@ -46,6 +46,8 @@ try {
       "127.0.0.1",
       "--port",
       "8789",
+      "--var",
+      "LOOP_MODERATOR_IDS:loop-test-moderator",
       "--inspector-port",
       "0",
     ],

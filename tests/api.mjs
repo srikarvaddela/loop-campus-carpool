@@ -63,6 +63,25 @@ async function chat(user, bookingId, message) {
   );
   return { status: res.status, body: await res.json() };
 }
+async function community(user, path, body, extra = {}) {
+  const headers = {
+    Connection: "close",
+    ...(user
+      ? {
+          "oai-authenticated-user-id": user,
+          "oai-authenticated-user-email": `${user}@example.test`,
+        }
+      : {}),
+    ...(body ? { "Content-Type": "application/json" } : {}),
+    ...extra,
+  };
+  const res = await fetch(`${base}/api/${path}`, {
+    method: body ? "POST" : "GET",
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json() };
+}
 const ride = {
   origin: `${prefix} Campus`,
   destination: "Test Airport",
@@ -113,12 +132,65 @@ eq(
   400,
   "identical endpoints rejected",
 );
+eq(
+  (await community(null, "profile")).status,
+  401,
+  "anonymous profile read rejected",
+);
+eq(
+  (await community(driver, "profile", { displayName: " ", campus: "Campus" }))
+    .status,
+  400,
+  "empty profile name rejected",
+);
+eq(
+  (await api(driver, { action: "post", ride })).status,
+  428,
+  "posting requires campus profile",
+);
+for (const user of [driver, riderA, riderB, stranger])
+  eq(
+    (
+      await community(user, "profile", {
+        displayName: user === driver ? "Taylor Driver" : "Test Rider",
+        campus: "Test University",
+        userId: driver,
+        isModerator: true,
+      })
+    ).status,
+    200,
+    "profile saved for authenticated user",
+  );
+eq(
+  (await community(stranger, "profile")).body.isModerator,
+  false,
+  "profile payload cannot grant moderator role",
+);
+eq(
+  (await community(driver, "profile")).body.profile.displayName,
+  "Taylor Driver",
+  "another user cannot overwrite profile",
+);
+eq(
+  (
+    await community(
+      driver,
+      "profile",
+      { displayName: "Taylor Driver", campus: "Test University" },
+      { origin: "https://other.example" },
+    )
+  ).status,
+  403,
+  "profile rejects cross-origin writes",
+);
 eq((await api(driver, { action: "post", ride })).status, 201, "ride created");
 let state = (await api(driver)).body;
 const r = state.rides.find((r) => r.origin === ride.origin);
 assert.ok(r);
 assertions++;
 eq(r.seats, 1, "capacity saved");
+eq(r.campus, "Test University", "campus derives from poster profile");
+eq(r.driverName, "Taylor Driver", "ride uses profile display name");
 eq(
   (await api(driver, { action: "request", rideId: r.id })).status,
   409,
@@ -390,6 +462,178 @@ eq(
   (await api(riderB, { action: "request", rideId: r.id })).status,
   409,
   "cancelled ride cannot be booked",
+);
+// Reporting and moderation use a second active trip so removal can cancel confirmed bookings.
+const modRide = {
+  ...ride,
+  origin: `${prefix} Moderation`,
+  destination: "Test Downtown",
+};
+eq(
+  (await api(driver, { action: "post", ride: modRide })).status,
+  201,
+  "moderation fixture ride created",
+);
+const modState = (await api(driver)).body;
+const target = modState.rides.find((r) => r.origin === modRide.origin);
+eq(
+  (await api(riderA, { action: "request", rideId: target.id })).status,
+  200,
+  "rider requests moderation fixture",
+);
+const targetBooking = (await api(driver)).body.bookings.find(
+  (b) => b.rideId === target.id,
+);
+eq(
+  (await api(driver, { action: "accept", bookingId: targetBooking.id })).status,
+  200,
+  "fixture seat confirmed",
+);
+const concern = {
+  rideId: target.id,
+  reason: "Misleading listing",
+  details:
+    "The advertised pickup point is inconsistent with the listing details.",
+};
+eq(
+  (await community(null, "reports", concern)).status,
+  401,
+  "anonymous reports rejected",
+);
+eq(
+  (await community(driver, "reports", concern)).status,
+  409,
+  "driver cannot report own ride",
+);
+eq(
+  (await community(riderA, "reports", { ...concern, details: "short" })).status,
+  400,
+  "report requires sufficient detail",
+);
+eq(
+  (
+    await community(riderA, "reports", concern, {
+      origin: "https://other.example",
+    })
+  ).status,
+  403,
+  "reports reject cross-origin requests",
+);
+eq(
+  (await community(riderA, "reports", concern)).status,
+  201,
+  "report submitted",
+);
+eq(
+  (await community(riderA, "reports", concern)).status,
+  409,
+  "duplicate reports rejected",
+);
+eq(
+  (await community(riderA, "reports")).body.reports.length,
+  1,
+  "reporter can track report",
+);
+eq(
+  (await community(driver, "reports")).body.reports.length,
+  0,
+  "reported driver cannot read reporter details",
+);
+eq(
+  (await community(stranger, "reports")).body.reports.length,
+  0,
+  "reports hidden from unrelated user",
+);
+eq(
+  (await community(stranger, "reports?review=true")).status,
+  403,
+  "moderator queue rejects ordinary users",
+);
+const moderator = "loop-test-moderator";
+eq(
+  (await community(moderator, "profile")).body.isModerator,
+  true,
+  "runtime allowlist grants moderator role",
+);
+let queue = (await community(moderator, "reports?review=true")).body.reports;
+eq(queue.length, 1, "configured moderator can read queue");
+const decision = {
+  reportId: queue[0].id,
+  resolution: "dismiss",
+  notes: "Reviewed listing and found no actionable discrepancy.",
+};
+eq(
+  (await community(stranger, "moderation", decision)).status,
+  403,
+  "ordinary users cannot resolve reports",
+);
+eq(
+  (await community(moderator, "moderation", { ...decision, notes: "" })).status,
+  400,
+  "resolution requires explanation",
+);
+eq(
+  (await community(moderator, "moderation", decision)).status,
+  200,
+  "moderator can dismiss report",
+);
+eq(
+  (await api(driver)).body.rides.find((r) => r.id === target.id).status,
+  "active",
+  "dismissal preserves ride",
+);
+eq(
+  (await community(riderA, "reports")).body.reports[0].resolution,
+  "dismiss",
+  "reporter sees resolution",
+);
+eq(
+  (await community(riderB, "reports", concern)).status,
+  201,
+  "second user may report same ride",
+);
+queue = (await community(moderator, "reports?review=true")).body.reports;
+const openReport = queue.find((p) => p.status === "open");
+const removal = {
+  reportId: openReport.id,
+  resolution: "hide",
+  notes: "Listing removed while the pickup discrepancy is reviewed.",
+};
+eq(
+  (await community(moderator, "moderation", removal)).status,
+  200,
+  "moderator can remove reported ride",
+);
+eq(
+  (await api(driver)).body.rides.find((r) => r.id === target.id).status,
+  "removed",
+  "removed ride retained in driver history",
+);
+eq(
+  (await api(stranger)).body.rides.some((r) => r.id === target.id),
+  false,
+  "removed ride disappears from discovery",
+);
+eq(
+  (await api(riderA)).body.bookings.find((b) => b.id === targetBooking.id)
+    .status,
+  "cancelled",
+  "removal cancels confirmed booking",
+);
+eq(
+  (await chat(riderA, targetBooking.id)).body.canSend,
+  false,
+  "removal closes trip messaging",
+);
+eq(
+  (await api(stranger, { action: "request", rideId: target.id })).status,
+  409,
+  "removed ride cannot be requested",
+);
+eq(
+  (await community(moderator, "moderation", removal)).status,
+  409,
+  "resolved report cannot be processed twice",
 );
 console.log(
   `PASS: ${assertions} API assertions (authentication, ownership, validation, private messaging, idempotency, parallel capacity, cancellations).`,

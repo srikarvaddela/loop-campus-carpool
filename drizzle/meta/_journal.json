@@ -15,6 +15,13 @@
       "when": 1792955432624,
       "tag": "0001_yielding_unicorn",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792956028019,
+      "tag": "0002_brave_garia",
+      "breakpoints": true
     }
   ]
 }
