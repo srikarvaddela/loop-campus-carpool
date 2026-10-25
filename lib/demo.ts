@@ -1,0 +1,132 @@
+import type { Snapshot } from "./types";
+export function demoSnapshot(): Snapshot {
+  const departure = (days: number, hour: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    d.setHours(hour, 0, 0, 0);
+    return d.toISOString();
+  };
+  const now = new Date().toISOString();
+  const entries = [
+    [
+      "demo-1",
+      "maya",
+      "Maya Chen",
+      "Campus · Student Union",
+      "Chicago · O’Hare Airport",
+      1,
+      9,
+      3,
+      1800,
+      "Toyota Corolla",
+      "One suitcase per person fits comfortably. Meet by the main entrance.",
+    ],
+    [
+      "demo-2",
+      "james",
+      "James Wilson",
+      "Campus · North Library",
+      "Madison · Downtown",
+      1,
+      14,
+      2,
+      1500,
+      "Honda Civic",
+      "Heading home for the weekend. Happy to make one quick coffee stop.",
+    ],
+    [
+      "demo-3",
+      "sofia",
+      "Sofia Patel",
+      "Campus · Student Union",
+      "Milwaukee · City Center",
+      2,
+      10,
+      3,
+      1200,
+      "Subaru Outback",
+      "Plenty of trunk space. Please be at the pickup point five minutes early.",
+    ],
+    [
+      "demo-4",
+      "alex",
+      "Alex Rivera",
+      "Campus · West Residence",
+      "Chicago · Downtown",
+      2,
+      16,
+      2,
+      2000,
+      "Hyundai Elantra",
+      "Easygoing ride into the city. Small bags welcome.",
+    ],
+    [
+      "demo-5",
+      "nora",
+      "Nora Thompson",
+      "Campus · North Library",
+      "Rockford · Bus Station",
+      3,
+      11,
+      1,
+      1000,
+      "Mazda 3",
+      "Going home for the weekend. Meet at the library entrance.",
+    ],
+    [
+      "demo-6",
+      "demo-you",
+      "You",
+      "Campus · Student Union",
+      "Chicago · Downtown",
+      4,
+      13,
+      2,
+      1600,
+      "Honda Accord",
+      "A sample ride you are driving. Open Requests to try approving a rider.",
+    ],
+  ] as const;
+  return {
+    user: { userId: "demo-you", displayName: "You" },
+    rides: entries.map(
+      ([
+        id,
+        driverId,
+        driverName,
+        origin,
+        destination,
+        days,
+        hour,
+        seats,
+        priceCents,
+        car,
+        notes,
+      ]) => ({
+        id,
+        driverId,
+        driverName,
+        origin,
+        destination,
+        departure: departure(days, hour),
+        seats,
+        priceCents,
+        car,
+        notes,
+        status: "active",
+        createdAt: now,
+        accepted: 0,
+      }),
+    ),
+    bookings: [
+      {
+        id: "demo-booking",
+        rideId: "demo-6",
+        riderId: "sam",
+        riderName: "Sam Brooks",
+        status: "pending",
+        createdAt: now,
+      },
+    ],
+  };
+}
