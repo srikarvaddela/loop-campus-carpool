@@ -40,6 +40,12 @@ export type Snapshot = {
   isModerator?: boolean;
 };
 export type Profile = { displayName: string; campus: string };
+export type RideSearchResult = {
+  rides: Ride[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  campuses: string[];
+};
 export type Report = {
   id: string;
   rideId: string;

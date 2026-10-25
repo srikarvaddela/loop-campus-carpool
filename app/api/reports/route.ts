@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { getChatGPTUser } from "../../chatgpt-auth";
 import { isModerator } from "../../../lib/moderation";
+import { rateLimit } from "../../../lib/rate-limit";
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -73,6 +74,20 @@ export async function POST(req: Request) {
   try {
     if (!env.DB) throw new Error("Database unavailable");
     const p = parsed.data;
+    const eligible = await env.DB.prepare(
+      "SELECT r.id FROM rides r WHERE r.id=? AND r.driver_id!=? AND NOT EXISTS(SELECT 1 FROM reports p WHERE p.ride_id=r.id AND p.reporter_id=?)",
+    )
+      .bind(p.rideId, user.userId, user.userId)
+      .first();
+    if (!eligible)
+      return reply(
+        {
+          error: "You already reported this ride, or the ride is unavailable.",
+        },
+        409,
+      );
+    const limited = await rateLimit(user.userId, "report");
+    if (limited) return limited;
     const result = await env.DB.prepare(
       `INSERT INTO reports (id,ride_id,reporter_id,reason,details,status,created_at) SELECT ?,r.id,?,?,?,'open',? FROM rides r WHERE r.id=? AND r.driver_id!=? ON CONFLICT(ride_id,reporter_id) DO NOTHING`,
     )

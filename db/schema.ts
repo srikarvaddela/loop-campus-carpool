@@ -22,7 +22,11 @@ export const rides = sqliteTable(
     status: text("status").notNull().default("active"),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [index("rides_departure_idx").on(t.departure)],
+  (t) => [
+    index("rides_departure_idx").on(t.departure),
+    index("rides_discovery_idx").on(t.status, t.departure, t.id),
+    index("rides_price_idx").on(t.status, t.priceCents, t.departure, t.id),
+  ],
 );
 export const bookings = sqliteTable(
   "bookings",
@@ -36,7 +40,10 @@ export const bookings = sqliteTable(
     status: text("status").notNull().default("pending"),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [uniqueIndex("one_booking_per_rider").on(t.rideId, t.riderId)],
+  (t) => [
+    uniqueIndex("one_booking_per_rider").on(t.rideId, t.riderId),
+    index("bookings_capacity_idx").on(t.rideId, t.status),
+  ],
 );
 
 export const messages = sqliteTable(
@@ -83,3 +90,9 @@ export const reports = sqliteTable(
     index("reports_status_created_idx").on(t.status, t.createdAt),
   ],
 );
+
+export const rateLimits = sqliteTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: integer("window_start").notNull(),
+  count: integer("count").notNull(),
+});

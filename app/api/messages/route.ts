@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { getChatGPTUser } from "../../chatgpt-auth";
+import { rateLimit } from "../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
@@ -85,6 +86,43 @@ export async function POST(req: Request) {
   const m = parsed.data;
   try {
     if (!env.DB) throw new Error("Database unavailable");
+    const duplicate = await env.DB.prepare(
+      "SELECT id,booking_id,sender_id,body FROM messages WHERE id=?",
+    )
+      .bind(m.clientId)
+      .first<{
+        id: string;
+        booking_id: string;
+        sender_id: string;
+        body: string;
+      }>();
+    if (duplicate) {
+      if (
+        duplicate.booking_id === m.bookingId &&
+        duplicate.sender_id === user.userId &&
+        duplicate.body === m.body
+      )
+        return reply({ ok: true });
+      return reply(
+        { error: "This message ID was already used. Send a new message." },
+        409,
+      );
+    }
+    const eligible = await env.DB.prepare(
+      "SELECT b.id FROM bookings b JOIN rides r ON r.id=b.ride_id WHERE b.id=? AND b.status='accepted' AND r.status='active' AND (b.rider_id=? OR r.driver_id=?)",
+    )
+      .bind(m.bookingId, user.userId, user.userId)
+      .first();
+    if (!eligible)
+      return reply(
+        {
+          error:
+            "Messaging is available only between the driver and a confirmed rider on an active ride.",
+        },
+        409,
+      );
+    const limited = await rateLimit(user.userId, "message");
+    if (limited) return limited;
     const result = await env.DB.prepare(
       `INSERT INTO messages (id,booking_id,sender_id,sender_name,body,created_at) SELECT ?,b.id,?,?,?,? FROM bookings b JOIN rides r ON r.id = b.ride_id WHERE b.id = ? AND b.status = 'accepted' AND r.status = 'active' AND (b.rider_id = ? OR r.driver_id = ?) ON CONFLICT(id) DO NOTHING`,
     )

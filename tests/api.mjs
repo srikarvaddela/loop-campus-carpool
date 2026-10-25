@@ -40,7 +40,11 @@ async function api(user, action, extra = {}) {
       `Local Worker returned ${res.status} for ${action?.action || "GET"} as ${user}: ${text}`,
     );
   }
-  return { status: res.status, body };
+  return {
+    status: res.status,
+    body,
+    retryAfter: res.headers.get("retry-after"),
+  };
 }
 async function chat(user, bookingId, message) {
   const headers = {
@@ -61,7 +65,11 @@ async function chat(user, bookingId, message) {
       body: message ? JSON.stringify({ bookingId, ...message }) : undefined,
     },
   );
-  return { status: res.status, body: await res.json() };
+  return {
+    status: res.status,
+    body: await res.json(),
+    retryAfter: res.headers.get("retry-after"),
+  };
 }
 async function community(user, path, body, extra = {}) {
   const headers = {
@@ -79,6 +87,20 @@ async function community(user, path, body, extra = {}) {
     method: body ? "POST" : "GET",
     headers,
     body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json() };
+}
+async function search(user, params = {}) {
+  const res = await fetch(`${base}/api/rides?${new URLSearchParams(params)}`, {
+    headers: {
+      Connection: "close",
+      ...(user
+        ? {
+            "oai-authenticated-user-id": user,
+            "oai-authenticated-user-email": `${user}@example.test`,
+          }
+        : {}),
+    },
   });
   return { status: res.status, body: await res.json() };
 }
@@ -454,7 +476,7 @@ eq(
   "ride cancellation closes remaining conversations",
 );
 eq(
-  (await api(stranger)).body.rides.some((x) => x.id === r.id),
+  (await search(stranger)).body.rides.some((x) => x.id === r.id),
   false,
   "cancelled rides disappear from public feed",
 );
@@ -610,7 +632,7 @@ eq(
   "removed ride retained in driver history",
 );
 eq(
-  (await api(stranger)).body.rides.some((r) => r.id === target.id),
+  (await search(stranger)).body.rides.some((r) => r.id === target.id),
   false,
   "removed ride disappears from discovery",
 );
@@ -635,6 +657,405 @@ eq(
   409,
   "resolved report cannot be processed twice",
 );
+// Discovery: tied sort keys, cursor/filter binding, literal searches, and complete traversal.
+const searchDrivers = [`${prefix}-search-a`, `${prefix}-search-b`];
+for (const user of searchDrivers)
+  eq(
+    (
+      await community(user, "profile", {
+        displayName: "Search Driver",
+        campus: "Pagination University",
+      })
+    ).status,
+    200,
+    "search driver profile created",
+  );
+const searchOrigin = `${prefix} Search Campus`;
+const departure = new Date(Date.now() + 3 * 86400000).toISOString();
+for (let i = 0; i < 20; i++)
+  eq(
+    (
+      await api(searchDrivers[Math.floor(i / 10)], {
+        action: "post",
+        ride: {
+          ...ride,
+          origin: searchOrigin,
+          destination: i % 2 ? "City Downtown" : "City Airport",
+          departure,
+          seats: (i % 3) + 1,
+          priceCents: 1000 + Math.floor(i / 4) * 100,
+        },
+      })
+    ).status,
+    201,
+    "search fixture created",
+  );
+eq(
+  (await search(null, { limit: "25" })).status,
+  400,
+  "search page size bounded",
+);
+eq(
+  (await search(null, { seats: "1.5" })).status,
+  400,
+  "fractional seat filter rejected",
+);
+eq(
+  (await search(null, { sort: "sql injection" })).status,
+  400,
+  "invalid sort rejected",
+);
+eq(
+  (await search(null, { cursor: "invalid" })).status,
+  400,
+  "malformed cursor rejected",
+);
+eq(
+  (await search(null, { from: departure })).status,
+  400,
+  "incomplete date window rejected",
+);
+eq(
+  (await search(null, { origin: "' OR 1=1 --" })).body.rides.length,
+  0,
+  "search input is literal and parameterized",
+);
+eq(
+  (await search(null, { origin: "%" })).body.rides.length,
+  0,
+  "percent sign does not act as a wildcard",
+);
+const searchQuery = { origin: searchOrigin, limit: "7" };
+const first = (await search(null, searchQuery)).body;
+eq(first.rides.length, 7, "first search page bounded");
+eq(first.hasMore, true, "first page has continuation");
+eq(
+  (
+    await search(null, {
+      ...searchQuery,
+      destination: "Airport",
+      cursor: first.nextCursor,
+    })
+  ).status,
+  400,
+  "cursor cannot be reused with different filters",
+);
+eq(
+  (await search(stranger, { ...searchQuery, cursor: first.nextCursor })).status,
+  400,
+  "cursor is scoped to visitor identity",
+);
+let collected = [...first.rides],
+  next = first.nextCursor;
+while (next) {
+  const page = (await search(null, { ...searchQuery, cursor: next })).body;
+  collected.push(...page.rides);
+  next = page.nextCursor;
+}
+eq(collected.length, 20, "cursor traversal returns every matching ride");
+eq(
+  new Set(collected.map((r) => r.id)).size,
+  20,
+  "tied departures do not duplicate or skip rides",
+);
+eq(
+  collected.map((r) => r.id).join(),
+  [...collected]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((r) => r.id)
+    .join(),
+  "departure ties use stable ID ordering",
+);
+let pricePage = (await search(null, { ...searchQuery, sort: "price" })).body;
+let byPrice = [...pricePage.rides];
+next = pricePage.nextCursor;
+while (next) {
+  pricePage = (
+    await search(null, { ...searchQuery, sort: "price", cursor: next })
+  ).body;
+  byPrice.push(...pricePage.rides);
+  next = pricePage.nextCursor;
+}
+eq(byPrice.length, 20, "price pagination traverses all records");
+eq(
+  new Set(byPrice.map((r) => r.id)).size,
+  20,
+  "price ties do not duplicate records",
+);
+eq(
+  byPrice.map((r) => r.priceCents).join(),
+  [...byPrice]
+    .sort((a, b) => a.priceCents - b.priceCents)
+    .map((r) => r.priceCents)
+    .join(),
+  "price sort ascending",
+);
+eq(
+  (
+    await search(null, {
+      origin: searchOrigin,
+      category: "airport",
+      limit: "24",
+    })
+  ).body.rides.length,
+  10,
+  "airport category filters server-side",
+);
+eq(
+  (await search(null, { origin: searchOrigin, category: "home", limit: "24" }))
+    .body.rides.length,
+  10,
+  "home category filters server-side",
+);
+eq(
+  (
+    await search(null, {
+      origin: searchOrigin,
+      campus: "pagination university",
+      limit: "24",
+    })
+  ).body.rides.length,
+  20,
+  "campus filter ignores letter case",
+);
+eq(
+  (await search(null, { origin: searchOrigin, seats: "3", limit: "24" })).body
+    .rides.length,
+  6,
+  "minimum available seats applied before pagination",
+);
+eq(
+  (
+    await search(null, {
+      origin: searchOrigin,
+      from: departure,
+      until: new Date(Date.parse(departure) + 1).toISOString(),
+      limit: "24",
+    })
+  ).body.rides.length,
+  20,
+  "date start inclusive",
+);
+eq(
+  (
+    await search(null, {
+      origin: searchOrigin,
+      from: new Date(Date.parse(departure) - 1).toISOString(),
+      until: departure,
+      limit: "24",
+    })
+  ).body.rides.length,
+  0,
+  "date end exclusive",
+);
+eq(
+  (await search(searchDrivers[0], { origin: searchOrigin, limit: "24" })).body
+    .rides.length,
+  10,
+  "discovery excludes own listings",
+);
+eq(
+  (await api(null)).body.rides.length,
+  0,
+  "trip snapshot no longer downloads public discovery feed",
+);
+
+// Limits: exercise real concurrency and distinguish account/action scopes.
+const quotaDriver = `${prefix}-quota-driver`,
+  quotaRider = `${prefix}-quota-rider`,
+  quotaReporter = `${prefix}-quota-reporter`;
+// Keep the quota fixtures in one fixed hour, including their initial profile write.
+const secondsLeftInHour = 3600 - (Math.floor(Date.now() / 1000) % 3600);
+if (secondsLeftInHour < 30)
+  await new Promise((resolve) =>
+    setTimeout(resolve, (secondsLeftInHour + 1) * 1000),
+  );
+for (const user of [quotaDriver, quotaRider, quotaReporter])
+  eq(
+    (
+      await community(user, "profile", {
+        displayName: "Quota Tester",
+        campus: "Quota University",
+      })
+    ).status,
+    200,
+    "quota fixture profile saved",
+  );
+const quotaRide = { ...ride, origin: `${prefix} Quota Campus`, seats: 3 };
+for (let i = 0; i < 9; i++)
+  eq(
+    (await api(quotaDriver, { action: "post", ride: quotaRide })).status,
+    201,
+    "ride quota permits allowed posts",
+  );
+const lastPost = await Promise.all([
+  api(quotaDriver, { action: "post", ride: quotaRide }),
+  api(quotaDriver, { action: "post", ride: quotaRide }),
+]);
+eq(
+  lastPost.filter((r) => r.status === 201).length,
+  1,
+  "only one concurrent final quota slot succeeds",
+);
+eq(
+  lastPost.filter((r) => r.status === 429).length,
+  1,
+  "excess concurrent quota slot rejected",
+);
+const exhausted = await api(quotaDriver, { action: "post", ride: quotaRide });
+eq(exhausted.status, 429, "exhausted posting quota stays enforced");
+eq(
+  Number(exhausted.retryAfter) > 0 && Number(exhausted.retryAfter) <= 3600,
+  true,
+  "rate limit includes valid Retry-After header",
+);
+const quotaTarget = (await api(quotaDriver)).body.rides[0];
+eq(
+  (await api(quotaRider, { action: "request", rideId: quotaTarget.id })).status,
+  200,
+  "request action has independent quota",
+);
+const quotaBooking = (await api(quotaDriver)).body.bookings.find(
+  (b) => b.rideId === quotaTarget.id,
+);
+eq(
+  (await api(quotaDriver, { action: "accept", bookingId: quotaBooking.id }))
+    .status,
+  200,
+  "approval remains available after posting limit",
+);
+const secondsLeft = 60 - (Math.floor(Date.now() / 1000) % 60);
+if (secondsLeft < 10)
+  await new Promise((resolve) => setTimeout(resolve, (secondsLeft + 1) * 1000));
+const sentIds = [];
+for (let i = 0; i < 30; i++) {
+  const id = crypto.randomUUID();
+  sentIds.push(id);
+  eq(
+    (
+      await chat(quotaRider, quotaBooking.id, {
+        clientId: id,
+        body: `Quota message ${i}`,
+      })
+    ).status,
+    201,
+    "message quota permits allowed sends",
+  );
+}
+const limitedMessage = await chat(quotaRider, quotaBooking.id, {
+  clientId: crypto.randomUUID(),
+  body: "Excess message",
+});
+eq(limitedMessage.status, 429, "message quota enforced");
+eq(
+  Number(limitedMessage.retryAfter) > 0 &&
+    Number(limitedMessage.retryAfter) <= 60,
+  true,
+  "message rate limit has minute retry window",
+);
+eq(
+  (
+    await chat(quotaRider, quotaBooking.id, {
+      clientId: sentIds[29],
+      body: "Quota message 29",
+    })
+  ).status,
+  200,
+  "delivered message retry succeeds at quota limit",
+);
+eq(
+  (
+    await chat(quotaDriver, quotaBooking.id, {
+      clientId: crypto.randomUUID(),
+      body: "Driver can still reply",
+    })
+  ).status,
+  201,
+  "another account has independent message quota",
+);
+for (let i = 0; i < 29; i++)
+  eq(
+    (await api(quotaRider, { action: "request", rideId: quotaTarget.id }))
+      .status,
+    409,
+    "duplicate request consumes an attempt without duplicating booking",
+  );
+eq(
+  (await api(quotaRider, { action: "request", rideId: quotaTarget.id })).status,
+  429,
+  "seat request attempt quota enforced",
+);
+eq(
+  (
+    await api(quotaRider, {
+      action: "cancelBooking",
+      bookingId: quotaBooking.id,
+    })
+  ).status,
+  200,
+  "cancellation works after request and message limits",
+);
+eq(
+  (await api(quotaDriver, { action: "cancelRide", rideId: quotaTarget.id }))
+    .status,
+  200,
+  "driver cancellation works after posting limit",
+);
+for (let i = 0; i < 5; i++)
+  eq(
+    (
+      await community(quotaReporter, "reports", {
+        rideId: collected[i].id,
+        reason: "Other",
+        details: "Test-only concern to verify the reporting quota.",
+      })
+    ).status,
+    201,
+    "report quota permits allowed submissions",
+  );
+eq(
+  (
+    await community(quotaReporter, "reports", {
+      rideId: collected[5].id,
+      reason: "Other",
+      details: "This submission exceeds the report quota.",
+    })
+  ).status,
+  429,
+  "report quota enforced",
+);
+eq(
+  (
+    await community(quotaReporter, "reports", {
+      rideId: collected[0].id,
+      reason: "Other",
+      details: "Duplicate should retain its normal conflict response.",
+    })
+  ).status,
+  409,
+  "duplicate report remains a conflict at quota limit",
+);
+for (let i = 0; i < 19; i++)
+  eq(
+    (
+      await community(quotaReporter, "profile", {
+        displayName: "Quota Tester",
+        campus: "Quota University",
+      })
+    ).status,
+    200,
+    "profile updates within quota permitted",
+  );
+eq(
+  (
+    await community(quotaReporter, "profile", {
+      displayName: "Quota Tester",
+      campus: "Quota University",
+    })
+  ).status,
+  429,
+  "profile update limit enforced",
+);
 console.log(
-  `PASS: ${assertions} API assertions (authentication, ownership, validation, private messaging, idempotency, parallel capacity, cancellations).`,
+  `PASS: ${assertions} API assertions (identity, booking races, private messaging, moderation, search pagination, and durable action limits).`,
 );

@@ -2,6 +2,8 @@ import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "../../chatgpt-auth";
 import { actionSchema } from "../../../lib/validation";
 import { isModerator } from "../../../lib/moderation";
+import { rateLimit } from "../../../lib/rate-limit";
+import { rideRecord } from "../../../lib/ride-record";
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -19,12 +21,14 @@ export async function GET() {
           .bind(user.userId)
           .first<{ display_name: string; campus: string }>()
       : null;
-    const rideResult = await db
-      .prepare(
-        `SELECT r.*, (SELECT COUNT(*) FROM bookings b WHERE b.ride_id = r.id AND b.status = 'accepted') AS accepted FROM rides r WHERE (r.status = 'active' AND r.departure > ?) OR r.driver_id = ? OR EXISTS (SELECT 1 FROM bookings b WHERE b.ride_id = r.id AND b.rider_id = ?) ORDER BY r.departure LIMIT 500`,
-      )
-      .bind(new Date().toISOString(), user?.userId ?? "", user?.userId ?? "")
-      .all();
+    const rideResult = user
+      ? await db
+          .prepare(
+            `SELECT r.*, (SELECT COUNT(*) FROM bookings b WHERE b.ride_id = r.id AND b.status = 'accepted') AS accepted FROM rides r WHERE r.driver_id = ? OR EXISTS (SELECT 1 FROM bookings b WHERE b.ride_id = r.id AND b.rider_id = ?) ORDER BY r.departure DESC,r.id DESC LIMIT 500`,
+          )
+          .bind(user.userId, user.userId)
+          .all()
+      : { results: [] };
     const bookingResult = user
       ? await db
           .prepare(
@@ -33,22 +37,7 @@ export async function GET() {
           .bind(user.userId, user.userId)
           .all()
       : { results: [] };
-    const rides = rideResult.results.map((r: Record<string, unknown>) => ({
-      id: r.id,
-      driverId: r.driver_id,
-      driverName: r.driver_name,
-      origin: r.origin,
-      campus: r.campus,
-      destination: r.destination,
-      departure: r.departure,
-      seats: r.seats,
-      priceCents: r.price_cents,
-      car: r.car,
-      notes: r.notes,
-      status: r.status,
-      createdAt: r.created_at,
-      accepted: r.accepted,
-    }));
+    const rides = rideResult.results.map(rideRecord);
     const bookings = bookingResult.results.map(
       (b: Record<string, unknown>) => ({
         id: b.id,
@@ -123,6 +112,8 @@ export async function POST(req: Request) {
         428,
       );
     if (a.action === "post") {
+      const limited = await rateLimit(uid, "post");
+      if (limited) return limited;
       const r = a.ride;
       await db
         .prepare(
@@ -147,6 +138,8 @@ export async function POST(req: Request) {
     }
     let result;
     if (a.action === "request") {
+      const limited = await rateLimit(uid, "request");
+      if (limited) return limited;
       // A unique (ride, rider) row prevents duplicate requests. Cancelled/declined requests can be renewed.
       result = await db
         .prepare(

@@ -42,6 +42,7 @@ import TripChat from "./trip-chat";
 import { ProfileForm, ReportForm, ReportsPanel } from "./community-panels";
 import { demoSnapshot } from "../lib/demo";
 import { actionSchema } from "../lib/validation";
+import { useRideSearch } from "../lib/use-ride-search";
 
 type View = "find" | "trips" | "requests";
 type Modal =
@@ -206,7 +207,33 @@ export default function Carpool() {
   const [demoMessages, setDemoMessages] = useState<Record<string, Message[]>>(
     {},
   );
-  const s = mode === "demo" ? demo : live;
+  const discovery = useRideSearch(
+    mode === "live" && view === "find",
+    live.user?.userId,
+    {
+      ...filters,
+      campus: campusFilter,
+      category:
+        category === "Airport runs"
+          ? "airport"
+          : category === "Heading home"
+            ? "home"
+            : "all",
+      sort,
+    },
+  );
+  const s =
+    mode === "demo"
+      ? demo
+      : {
+          ...live,
+          rides: [
+            ...live.rides,
+            ...discovery.rides.filter(
+              (r) => !live.rides.some((p) => p.id === r.id),
+            ),
+          ],
+        };
   const uid = s.user?.userId;
   const chatBooking =
     modal?.type === "chat"
@@ -226,11 +253,12 @@ export default function Carpool() {
           Date.parse(r.departure) > Date.now(),
       ),
   );
-  const refresh = async () => {
+  const refresh = async (refreshDiscovery = true) => {
     const res = await fetch("/api/loop", { cache: "no-store" });
     const data = (await res.json()) as Snapshot & { error?: string };
     if (!res.ok) throw new Error(data.error || "Could not load rides.");
     setLive(data);
+    if (refreshDiscovery) discovery.reload();
   };
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("mode") === "live")
@@ -246,7 +274,7 @@ export default function Carpool() {
   }, [notice]);
   useEffect(() => {
     const t = setInterval(() => {
-      refresh().catch(() => {});
+      refresh(false).catch(() => {});
     }, 30000);
     return () => clearInterval(t);
   }, []);
@@ -353,13 +381,14 @@ export default function Carpool() {
       setModal(null);
       return true;
     } catch (e) {
+      if (mode === "live") discovery.reload();
       setError(e instanceof Error ? e.message : "Something went wrong.");
       return false;
     } finally {
       setBusy(false);
     }
   }
-  const matched = s.rides
+  const demoMatched = demo.rides
     .filter(
       (r) =>
         !campusFilter || r.campus.toLowerCase() === campusFilter.toLowerCase(),
@@ -391,6 +420,7 @@ export default function Carpool() {
         ? a.priceCents - b.priceCents
         : Date.parse(a.departure) - Date.parse(b.departure),
     );
+  const matched = mode === "demo" ? demoMatched : discovery.rides;
   const selected =
     modal?.type === "ride" ? s.rides.find((r) => r.id === modal.id) : undefined;
   const myBooking = selected
@@ -426,9 +456,12 @@ export default function Carpool() {
     modal?.type === "report"
       ? s.rides.find((r) => r.id === modal.rideId)
       : undefined;
-  const campusOptions = Array.from(
-    new Set(s.rides.map((r) => r.campus).filter(Boolean)),
-  ).sort();
+  const campusOptions =
+    mode === "demo"
+      ? Array.from(
+          new Set(demo.rides.map((r) => r.campus).filter(Boolean)),
+        ).sort()
+      : discovery.campuses;
   async function saveProfile(p: Profile) {
     if (mode === "demo")
       setDemo((previous) => ({
@@ -840,7 +873,10 @@ export default function Carpool() {
                 <div className="result-line">
                   <span>
                     {matched.length} {mode === "demo" ? "demo " : ""}
-                    {matched.length === 1 ? "ride" : "rides"} available
+                    {matched.length === 1 ? "ride" : "rides"}{" "}
+                    {mode === "live" && discovery.hasMore
+                      ? "loaded · more available"
+                      : "available"}
                   </span>
                   {activeFilter && (
                     <button onClick={clearFilters}>
@@ -848,12 +884,22 @@ export default function Carpool() {
                     </button>
                   )}
                 </div>
-                {mode === "live" && loading ? (
+                {mode === "live" && discovery.error && (
+                  <div className="error-banner" role="alert">
+                    {discovery.error}
+                    <button className="text-button" onClick={discovery.reload}>
+                      Retry search
+                    </button>
+                  </div>
+                )}
+                {mode === "live" && (loading || discovery.loading) ? (
                   <div className="empty-state">
                     <LoaderCircle className="spin" />
                     Loading rides…
                   </div>
-                ) : matched.length ? (
+                ) : mode === "live" &&
+                  discovery.error &&
+                  !matched.length ? null : matched.length ? (
                   <div className="ride-grid">
                     {matched.map((r, i) => (
                       <RideCard
@@ -889,6 +935,23 @@ export default function Carpool() {
                     >
                       {activeFilter ? "Clear filters" : "Post the first ride"}
                     </button>
+                  </div>
+                )}
+                {mode === "live" && discovery.hasMore && (
+                  <div className="load-more">
+                    <button
+                      className="secondary"
+                      onClick={() => void discovery.loadMore()}
+                      disabled={discovery.loading || discovery.loadingMore}
+                    >
+                      {discovery.loadingMore ? (
+                        <LoaderCircle size={16} className="spin" />
+                      ) : (
+                        <Plus size={16} />
+                      )}
+                      Load more rides
+                    </button>
+                    <span>Showing {matched.length} rides</span>
                   </div>
                 )}
               </section>

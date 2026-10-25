@@ -36,6 +36,7 @@ export default function TripChat({
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
+  const [sendError, setSendError] = useState("");
   const pending = useRef<{ body: string; id: string } | null>(null);
   const latest = useRef<HTMLDivElement>(null);
   const shown = demo ?? conversation;
@@ -89,7 +90,7 @@ export default function TripChat({
     const body = draft.trim();
     if (!body || sending || !shown.canSend) return;
     setSending(true);
-    setError("");
+    setSendError("");
     // Retain the same id after an uncertain network failure, making retries safe.
     if (pending.current?.body !== body)
       pending.current = { body, id: crypto.randomUUID() };
@@ -118,7 +119,7 @@ export default function TripChat({
       setDraft("");
       pending.current = null;
     } catch (e) {
-      setError(
+      setSendError(
         e instanceof Error
           ? e.message
           : "Couldn't send. Your draft is saved here.",
@@ -143,10 +144,10 @@ export default function TripChat({
         <LockKeyhole size={12} />
         Only you and the other participant can read this conversation.
       </div>
-      {error && (
+      {(sendError || error) && (
         <div className="chat-error" role="alert">
-          <span>{error}</span>
-          {!demo && (
+          <span>{sendError || error}</span>
+          {!demo && !sendError && (
             <button
               type="button"
               className="icon-button"

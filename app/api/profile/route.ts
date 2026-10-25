@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { getChatGPTUser } from "../../chatgpt-auth";
 import { isModerator } from "../../../lib/moderation";
+import { rateLimit } from "../../../lib/rate-limit";
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -53,6 +54,8 @@ export async function POST(req: Request) {
   try {
     if (!env.DB) throw new Error("Database unavailable");
     const p = parsed.data;
+    const limited = await rateLimit(user.userId, "profile");
+    if (limited) return limited;
     await env.DB.prepare(
       "INSERT INTO profiles (user_id,display_name,campus,updated_at) VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,campus=excluded.campus,updated_at=excluded.updated_at",
     )
