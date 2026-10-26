@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const schema = z.object({
+  kind: z.enum(["ride", "message"]).default("ride"),
   reportId: z.string().min(1).max(100),
   resolution: z.enum(["hide", "dismiss"]),
   notes: z
@@ -41,6 +42,23 @@ export async function POST(req: Request) {
     if (!env.DB) throw new Error("Database unavailable");
     const p = parsed.data;
     const now = new Date().toISOString();
+    if (p.kind === "message") {
+      const statements = [
+        env.DB.prepare(
+          "UPDATE message_reports SET status='resolved',resolution=?,resolution_notes=?,moderator_id=?,resolved_at=? WHERE id=? AND status='open'",
+        ).bind(p.resolution, p.notes, user.userId, now, p.reportId),
+      ];
+      if (p.resolution === "hide")
+        statements.push(
+          env.DB.prepare(
+            "UPDATE messages SET hidden_at=? WHERE id=(SELECT message_id FROM message_reports WHERE id=? AND moderator_id=? AND resolved_at=? AND resolution='hide') AND hidden_at IS NULL",
+          ).bind(now, p.reportId, user.userId, now),
+        );
+      const result = await env.DB.batch(statements);
+      return result[0].meta.changes
+        ? reply({ ok: true })
+        : reply({ error: "This message report was already resolved." }, 409);
+    }
     const statements = [
       env.DB.prepare(
         `UPDATE reports SET status='resolved',resolution=?,resolution_notes=?,moderator_id=?,resolved_at=? WHERE id=? AND status='open'`,
@@ -49,8 +67,8 @@ export async function POST(req: Request) {
     if (p.resolution === "hide") {
       statements.push(
         env.DB.prepare(
-          `UPDATE rides SET status='removed' WHERE id=(SELECT ride_id FROM reports WHERE id=? AND moderator_id=? AND resolved_at=? AND resolution='hide') AND status='active'`,
-        ).bind(p.reportId, user.userId, now),
+          `UPDATE rides SET status='removed',removal_report_id=?,version=version+1 WHERE id=(SELECT ride_id FROM reports WHERE id=? AND moderator_id=? AND resolved_at=? AND resolution='hide') AND status='active'`,
+        ).bind(p.reportId, p.reportId, user.userId, now),
       );
       statements.push(
         env.DB.prepare(

@@ -45,7 +45,8 @@ export async function GET(req: Request) {
         bookingId: m.booking_id,
         senderId: m.sender_id,
         senderName: m.sender_name,
-        body: m.body,
+        body: m.hidden_at ? "Message removed by a moderator." : m.body,
+        hidden: !!m.hidden_at,
         createdAt: m.created_at,
       })),
       canSend:

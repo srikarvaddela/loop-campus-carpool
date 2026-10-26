@@ -37,20 +37,29 @@ import type {
   Message,
   Profile,
   Report,
+  Appeal,
 } from "../lib/types";
 import TripChat from "./trip-chat";
-import { ProfileForm, ReportForm, ReportsPanel } from "./community-panels";
-import { demoSnapshot } from "../lib/demo";
+import { ProfileForm, ReportForm } from "./community-panels";
+import { AppealForm, ReviewCenter } from "./appeal-panels";
+import {
+  demoSnapshot,
+  demoConversations,
+  demoSafetyReports,
+} from "../lib/demo";
 import { actionSchema } from "../lib/validation";
 import { useRideSearch } from "../lib/use-ride-search";
 
 type View = "find" | "trips" | "requests";
 type Modal =
   | { type: "post" }
+  | { type: "edit"; id: string; version: number }
   | { type: "ride"; id: string }
   | { type: "help" }
   | { type: "profile" }
   | { type: "report"; rideId: string }
+  | { type: "message-report"; rideId: string; message: Message }
+  | { type: "appeal"; rideId: string }
   | { type: "reports" }
   | { type: "chat"; bookingId: string }
   | { type: "confirm"; action: Record<string, unknown>; message: string }
@@ -183,30 +192,13 @@ export default function Carpool() {
   const [tripTab, setTripTab] = useState("riding");
   const [campusFilter, setCampusFilter] = useState("");
   const [afterProfile, setAfterProfile] = useState<
-    "post" | { rideId: string } | null
+    "post" | { rideId: string; expectedVersion: number } | null
   >(null);
-  const [demoReports, setDemoReports] = useState<
-    (Report & { isMine?: boolean })[]
-  >(() => [
-    {
-      id: "sample-report",
-      rideId: "demo-4",
-      reason: "Misleading listing",
-      details:
-        "This is a fictional report to demonstrate reviewing a concern. The listed pickup point and the driver’s note disagree.",
-      status: "open",
-      resolution: null,
-      resolutionNotes: null,
-      createdAt: new Date().toISOString(),
-      origin: "Campus · West Residence",
-      destination: "Chicago · Downtown",
-      driverName: "Alex Rivera",
-      isMine: false,
-    },
-  ]);
-  const [demoMessages, setDemoMessages] = useState<Record<string, Message[]>>(
-    {},
-  );
+  const [demoReports, setDemoReports] =
+    useState<(Report & { isMine?: boolean })[]>(demoSafetyReports);
+  const [demoAppeals, setDemoAppeals] = useState<Appeal[]>([]);
+  const [demoMessages, setDemoMessages] =
+    useState<Record<string, Message[]>>(demoConversations);
   const discovery = useRideSearch(
     mode === "live" && view === "find",
     live.user?.userId,
@@ -316,9 +308,41 @@ export default function Carpool() {
             status: "active",
             createdAt: now,
             accepted: 0,
+            version: 1,
           });
+        } else if (parsed.data.action === "edit") {
+          const edit = parsed.data;
+          const target = next.rides.find((r) => r.id === edit.rideId);
+          if (target && target.version !== edit.expectedVersion)
+            throw new Error("The ride changed. Close the editor and refresh.");
+          if (!target || target.driverId !== uid || target.status !== "active")
+            throw new Error("This ride cannot be edited.");
+          const r = edit.ride;
+          const active = next.bookings.some(
+            (b) =>
+              b.rideId === target.id &&
+              ["pending", "accepted"].includes(b.status),
+          );
+          if (r.seats < target.accepted)
+            throw new Error("Keep enough seats for confirmed riders.");
+          if (
+            active &&
+            (r.origin !== target.origin ||
+              r.destination !== target.destination ||
+              r.departure !== target.departure ||
+              r.priceCents !== target.priceCents)
+          )
+            throw new Error(
+              "Keep the agreed route, time, and price while requests are active.",
+            );
+          Object.assign(target, r);
+          target.version++;
         } else if (action.action === "request") {
           const r = next.rides.find((r) => r.id === action.rideId);
+          if (r && r.version !== action.expectedVersion)
+            throw new Error(
+              "The ride changed. Refresh before requesting a seat.",
+            );
           if (!r || r.driverId === uid || r.accepted >= r.seats)
             throw new Error("This ride is unavailable.");
           const existing = next.bookings.find(
@@ -338,7 +362,10 @@ export default function Carpool() {
             });
         } else if (action.action === "cancelRide") {
           next.rides.forEach((r) => {
-            if (r.id === action.rideId) r.status = "cancelled";
+            if (r.id === action.rideId) {
+              r.status = "cancelled";
+              r.version++;
+            }
           });
           next.bookings.forEach((b) => {
             if (
@@ -423,6 +450,9 @@ export default function Carpool() {
   const matched = mode === "demo" ? demoMatched : discovery.rides;
   const selected =
     modal?.type === "ride" ? s.rides.find((r) => r.id === modal.id) : undefined;
+  const editingRide =
+    modal?.type === "edit" ? s.rides.find((r) => r.id === modal.id) : undefined;
+  const editingVersion = modal?.type === "edit" ? modal.version : undefined;
   const myBooking = selected
     ? s.bookings.find((b) => b.rideId === selected.id && b.riderId === uid)
     : undefined;
@@ -453,7 +483,9 @@ export default function Carpool() {
     setModal({ type: "post" });
   };
   const reportRide =
-    modal?.type === "report"
+    modal?.type === "report" ||
+    modal?.type === "message-report" ||
+    modal?.type === "appeal"
       ? s.rides.find((r) => r.id === modal.rideId)
       : undefined;
   const campusOptions =
@@ -478,7 +510,11 @@ export default function Carpool() {
     if (next === "post") setModal({ type: "post" });
     else if (next)
       await mutate(
-        { action: "request", rideId: next.rideId },
+        {
+          action: "request",
+          rideId: next.rideId,
+          expectedVersion: next.expectedVersion,
+        },
         "Seat requested",
       );
     else setModal(null);
@@ -496,11 +532,36 @@ export default function Carpool() {
           : r,
       ),
     );
-    if (resolution === "hide" && report)
+    if (resolution === "hide" && report?.kind === "message") {
+      setDemoMessages((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).map(([bookingId, messages]) => [
+            bookingId,
+            messages.map((m) =>
+              m.id === report.messageId
+                ? {
+                    ...m,
+                    hidden: true,
+                    body: "Message removed by a moderator.",
+                  }
+                : m,
+            ),
+          ]),
+        ),
+      );
+    } else if (resolution === "hide" && report)
       setDemo((previous) => ({
         ...previous,
         rides: previous.rides.map((r) =>
-          r.id === report.rideId ? { ...r, status: "removed", accepted: 0 } : r,
+          r.id === report.rideId
+            ? {
+                ...r,
+                status: "removed",
+                accepted: 0,
+                removalReportId: report.id,
+                version: r.version + 1,
+              }
+            : r,
         ),
         bookings: previous.bookings.map((b) =>
           b.rideId === report.rideId &&
@@ -509,6 +570,55 @@ export default function Carpool() {
             : b,
         ),
       }));
+  }
+  function demoReviewAppeal(
+    id: string,
+    decision: "approve" | "deny",
+    notes: string,
+  ) {
+    const appeal = demoAppeals.find((a) => a.id === id);
+    if (!appeal || appeal.status !== "pending")
+      throw new Error("This appeal was already reviewed.");
+    const ride = demo.rides.find((r) => r.id === appeal.rideId);
+    if (
+      decision === "approve" &&
+      (!ride ||
+        ride.status !== "removed" ||
+        ride.removalReportId !== appeal.removalReportId ||
+        Date.parse(ride.departure) <= Date.now())
+    )
+      throw new Error("The removal changed or the ride is no longer upcoming.");
+    setDemoAppeals((previous) =>
+      previous.map((a) =>
+        a.id === id
+          ? {
+              ...a,
+              status: decision === "approve" ? "approved" : "denied",
+              decisionNotes: notes,
+            }
+          : a,
+      ),
+    );
+    if (decision === "approve") {
+      setDemo((previous) => ({
+        ...previous,
+        rides: previous.rides.map((r) =>
+          r.id === appeal.rideId
+            ? {
+                ...r,
+                status: "active",
+                removalReportId: null,
+                version: r.version + 1,
+              }
+            : r,
+        ),
+      }));
+      setDemoReports((previous) =>
+        previous.map((r) =>
+          r.rideId === appeal.rideId ? { ...r, rideStatus: "active" } : r,
+        ),
+      );
+    }
   }
   return (
     <div className="app-shell">
@@ -1114,13 +1224,41 @@ export default function Carpool() {
                           </span>
                         </div>
                         <div className="trip-actions">
+                          {r.status === "active" &&
+                            Date.parse(r.departure) > Date.now() && (
+                              <button
+                                className="text-button"
+                                onClick={() => {
+                                  setError("");
+                                  setModal({
+                                    type: "edit",
+                                    id: r.id,
+                                    version: r.version,
+                                  });
+                                }}
+                              >
+                                Edit ride
+                              </button>
+                            )}
                           <button
                             className="text-button"
                             onClick={() => setModal({ type: "ride", id: r.id })}
                           >
                             Details <ArrowUpRight size={14} />
                           </button>
-                          {r.status === "active" && (
+                          {r.status === "removed" &&
+                            Date.parse(r.departure) > Date.now() && (
+                              <button
+                                className="text-button"
+                                onClick={() => {
+                                  setError("");
+                                  setModal({ type: "appeal", rideId: r.id });
+                                }}
+                              >
+                                Appeal removal
+                              </button>
+                            )}
+                          {["active", "removed"].includes(r.status) && (
                             <button
                               className="text-button danger"
                               disabled={busy}
@@ -1253,8 +1391,10 @@ export default function Carpool() {
             if (!busy) setModal(null);
           }}
           title={
-            modal.type === "post"
-              ? "Offer a ride"
+            modal.type === "post" || modal.type === "edit"
+              ? modal.type === "edit"
+                ? "Edit your ride"
+                : "Offer a ride"
               : modal.type === "ride"
                 ? "Your ride, in detail"
                 : modal.type === "help"
@@ -1263,11 +1403,16 @@ export default function Carpool() {
                     ? "Trip messages"
                     : modal.type === "profile"
                       ? "Your campus profile"
-                      : modal.type === "report"
-                        ? "Report this ride"
-                        : modal.type === "reports"
-                          ? "Reports & review"
-                          : "One quick check"
+                      : modal.type === "report" ||
+                          modal.type === "message-report"
+                        ? modal.type === "message-report"
+                          ? "Report this message"
+                          : "Report this ride"
+                        : modal.type === "appeal"
+                          ? "Appeal a ride removal"
+                          : modal.type === "reports"
+                            ? "Reports & review"
+                            : "One quick check"
           }
         >
           {error && (
@@ -1285,7 +1430,7 @@ export default function Carpool() {
                 onSaved={saveProfile}
               />
             ))}
-          {modal.type === "report" &&
+          {(modal.type === "report" || modal.type === "message-report") &&
             reportRide &&
             (mode === "live" && !uid ? (
               <SignInPrompt />
@@ -1293,11 +1438,18 @@ export default function Carpool() {
               <ReportForm
                 destination={reportRide.destination}
                 rideId={reportRide.id}
+                targetMessage={
+                  modal.type === "message-report" ? modal.message : undefined
+                }
                 demo={mode === "demo"}
                 onSubmit={(reason, details) => {
                   if (
                     demoReports.some(
-                      (r) => r.rideId === reportRide.id && r.isMine,
+                      (r) =>
+                        r.isMine &&
+                        (modal.type === "message-report"
+                          ? r.messageId === modal.message.id
+                          : r.rideId === reportRide.id && r.kind !== "message"),
                     )
                   )
                     throw new Error(
@@ -1307,6 +1459,20 @@ export default function Carpool() {
                     {
                       id: crypto.randomUUID(),
                       rideId: reportRide.id,
+                      kind:
+                        modal.type === "message-report" ? "message" : "ride",
+                      messageId:
+                        modal.type === "message-report"
+                          ? modal.message.id
+                          : undefined,
+                      messageText:
+                        modal.type === "message-report"
+                          ? modal.message.body
+                          : undefined,
+                      messageSenderName:
+                        modal.type === "message-report"
+                          ? modal.message.senderName
+                          : undefined,
                       reason,
                       details,
                       status: "open",
@@ -1334,11 +1500,16 @@ export default function Carpool() {
             (mode === "live" && !uid ? (
               <SignInPrompt />
             ) : (
-              <ReportsPanel
+              <ReviewCenter
                 isModerator={!!s.isModerator}
-                demo={
+                demoReports={
                   mode === "demo"
                     ? { reports: demoReports, resolve: demoResolve }
+                    : undefined
+                }
+                demoAppeals={
+                  mode === "demo"
+                    ? { appeals: demoAppeals, review: demoReviewAppeal }
                     : undefined
                 }
                 onChanged={async () => {
@@ -1346,6 +1517,49 @@ export default function Carpool() {
                 }}
               />
             ))}
+          {modal.type === "appeal" && reportRide && (
+            <AppealForm
+              rideId={reportRide.id}
+              destination={reportRide.destination}
+              demo={mode === "demo"}
+              onSubmit={(details) => {
+                if (
+                  reportRide.status !== "removed" ||
+                  !reportRide.removalReportId ||
+                  demoAppeals.some(
+                    (a) =>
+                      a.rideId === reportRide.id &&
+                      a.removalReportId === reportRide.removalReportId,
+                  )
+                )
+                  throw new Error(
+                    "This removal was already appealed, or the ride changed.",
+                  );
+                setDemoAppeals((previous) => [
+                  {
+                    id: crypto.randomUUID(),
+                    rideId: reportRide.id,
+                    removalReportId: reportRide.removalReportId!,
+                    driverName: reportRide.driverName,
+                    origin: reportRide.origin,
+                    destination: reportRide.destination,
+                    details,
+                    status: "pending",
+                    decisionNotes: null,
+                    createdAt: new Date().toISOString(),
+                  },
+                  ...previous,
+                ]);
+              }}
+              onSaved={() => {
+                setModal(null);
+                setNotice(
+                  "Appeal submitted. Track it under Reports & review → Ride appeals." +
+                    (mode === "demo" ? " · Demo only" : ""),
+                );
+              }}
+            />
+          )}
           {mode === "demo" && modal.type !== "help" && (
             <div className="modal-demo">
               <Sparkles size={14} />
@@ -1363,6 +1577,14 @@ export default function Carpool() {
                   ? chatBooking.riderName
                   : chatRide.driverName
               }
+              onReport={(message) => {
+                setError("");
+                setModal({
+                  type: "message-report",
+                  rideId: chatRide.id,
+                  message,
+                });
+              }}
               demo={
                 mode === "demo"
                   ? {
@@ -1399,6 +1621,28 @@ export default function Carpool() {
                 }
               />
             ))}
+          {modal.type === "edit" && editingRide && (
+            <PostForm
+              ride={editingRide}
+              locked={s.bookings.some(
+                (b) =>
+                  b.rideId === editingRide.id &&
+                  ["pending", "accepted"].includes(b.status),
+              )}
+              busy={busy}
+              submit={(ride) =>
+                mutate(
+                  {
+                    action: "edit",
+                    rideId: editingRide.id,
+                    expectedVersion: editingVersion,
+                    ride,
+                  },
+                  "Ride updated",
+                ).then(() => {})
+              }
+            />
+          )}
           {modal.type === "ride" && selected && (
             <>
               <div className="detail-route">
@@ -1494,10 +1738,17 @@ export default function Carpool() {
                   disabled={busy || selected.accepted >= selected.seats}
                   onClick={() =>
                     mode === "live" && !s.profile
-                      ? (setAfterProfile({ rideId: selected.id }),
+                      ? (setAfterProfile({
+                          rideId: selected.id,
+                          expectedVersion: selected.version,
+                        }),
                         setModal({ type: "profile" }))
                       : mutate(
-                          { action: "request", rideId: selected.id },
+                          {
+                            action: "request",
+                            rideId: selected.id,
+                            expectedVersion: selected.version,
+                          },
                           "Seat requested",
                         )
                   }
@@ -1652,8 +1903,9 @@ export default function Carpool() {
                 className="secondary full"
                 onClick={() => {
                   setDemo(demoSnapshot());
-                  setDemoMessages({});
-                  setDemoReports([]);
+                  setDemoMessages(demoConversations());
+                  setDemoReports(demoSafetyReports());
+                  setDemoAppeals([]);
                   switchMode("demo");
                   setNotice("Demo reset. Try requesting or approving a seat.");
                 }}
@@ -1835,9 +2087,13 @@ function Dialog({
 function PostForm({
   submit,
   busy,
+  ride,
+  locked = false,
 }: {
   submit: (ride: Record<string, unknown>) => Promise<void>;
   busy: boolean;
+  ride?: Ride;
+  locked?: boolean;
 }) {
   const [formError, setFormError] = useState("");
   async function handle(e: FormEvent<HTMLFormElement>) {
@@ -1852,7 +2108,13 @@ function PostForm({
     await submit({
       origin: f.get("origin"),
       destination: f.get("destination"),
-      departure: departure.toISOString(),
+      departure:
+        ride &&
+        String(f.get("date")) === localDate(ride.departure) &&
+        String(f.get("time")) ===
+          `${String(new Date(ride.departure).getHours()).padStart(2, "0")}:${String(new Date(ride.departure).getMinutes()).padStart(2, "0")}`
+          ? ride.departure
+          : departure.toISOString(),
       seats: Number(f.get("seats")),
       priceCents: Math.round(Number(f.get("price")) * 100),
       car: f.get("car"),
@@ -1862,12 +2124,18 @@ function PostForm({
   return (
     <form className="post-form" onSubmit={handle}>
       <p className="form-intro">
-        Heading somewhere? Give an empty seat a purpose.
+        {ride
+          ? locked
+            ? "Riders have active requests. Keep the agreed route, time, and price; you can update car details, notes, or available capacity."
+            : "Update the details of your upcoming trip."
+          : "Heading somewhere? Give an empty seat a purpose."}
       </p>
       <label>
         Pickup location
         <input
           name="origin"
+          defaultValue={ride?.origin}
+          readOnly={locked}
           placeholder="e.g. Campus · Student Union"
           required
           minLength={2}
@@ -1878,6 +2146,8 @@ function PostForm({
         Destination
         <input
           name="destination"
+          defaultValue={ride?.destination}
+          readOnly={locked}
           placeholder="e.g. Chicago · O’Hare Airport"
           required
           minLength={2}
@@ -1890,19 +2160,31 @@ function PostForm({
           <input
             name="date"
             type="date"
+            defaultValue={ride ? localDate(ride.departure) : undefined}
+            readOnly={locked}
             min={localDate(new Date().toISOString())}
             required
           />
         </label>
         <label>
           Departure time
-          <input name="time" type="time" required />
+          <input
+            name="time"
+            type="time"
+            required
+            defaultValue={
+              ride
+                ? `${String(new Date(ride.departure).getHours()).padStart(2, "0")}:${String(new Date(ride.departure).getMinutes()).padStart(2, "0")}`
+                : undefined
+            }
+            readOnly={locked}
+          />
         </label>
         <label>
           Available seats
-          <select name="seats" defaultValue="3">
+          <select name="seats" defaultValue={ride?.seats || 3}>
             {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-              <option key={n} value={n}>
+              <option key={n} value={n} disabled={!!ride && n < ride.accepted}>
                 {n} {n === 1 ? "seat" : "seats"}
               </option>
             ))}
@@ -1912,6 +2194,8 @@ function PostForm({
           Cost per seat (USD)
           <input
             name="price"
+            defaultValue={ride ? ride.priceCents / 100 : undefined}
+            readOnly={locked}
             type="number"
             min="0"
             max="500"
@@ -1925,6 +2209,7 @@ function PostForm({
         Your car
         <input
           name="car"
+          defaultValue={ride?.car}
           placeholder="e.g. Blue Honda Civic"
           required
           minLength={2}
@@ -1935,6 +2220,7 @@ function PostForm({
         Anything riders should know? <span className="optional">Optional</span>
         <textarea
           name="notes"
+          defaultValue={ride?.notes}
           rows={3}
           maxLength={600}
           placeholder="Meeting point, luggage space, or the road-trip playlist…"
@@ -1955,7 +2241,7 @@ function PostForm({
         ) : (
           <Plus size={17} />
         )}
-        Post my ride
+        {ride ? "Save ride changes" : "Post my ride"}
       </button>
     </form>
   );

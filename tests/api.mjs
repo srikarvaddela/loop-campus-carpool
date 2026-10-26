@@ -15,6 +15,12 @@ const eq = (actual, expected, message) => {
   assertions++;
 };
 async function api(user, action, extra = {}) {
+  if (
+    action &&
+    ["request", "edit"].includes(action.action) &&
+    action.expectedVersion === undefined
+  )
+    action = { ...action, expectedVersion: 1 };
   const headers = {
     Connection: "close",
     ...(user
@@ -1056,6 +1062,1019 @@ eq(
   429,
   "profile update limit enforced",
 );
+// Message reports reveal only the selected message, and membership is per booking rather than per ride.
+const safetyDriver = `${prefix}-safety-driver`,
+  safetyRider = `${prefix}-safety-rider`,
+  safetyOther = `${prefix}-safety-other`;
+const safetyHourRemaining = 3600 - (Math.floor(Date.now() / 1000) % 3600);
+if (safetyHourRemaining < 30)
+  await new Promise((resolve) =>
+    setTimeout(resolve, (safetyHourRemaining + 1) * 1000),
+  );
+for (const user of [safetyDriver, safetyRider, safetyOther])
+  eq(
+    (
+      await community(user, "profile", {
+        displayName: "Safety Fixture",
+        campus: "Safety University",
+      })
+    ).status,
+    200,
+    "safety fixture profile created",
+  );
+const safetyRide = {
+  ...ride,
+  origin: `${prefix} Safety Campus`,
+  destination: "Safety Downtown",
+  seats: 2,
+};
+eq(
+  (await api(safetyDriver, { action: "post", ride: safetyRide })).status,
+  201,
+  "safety fixture ride created",
+);
+const safetyTarget = (await api(safetyDriver)).body.rides.find(
+  (r) => r.origin === safetyRide.origin,
+);
+for (const user of [safetyRider, safetyOther])
+  eq(
+    (await api(user, { action: "request", rideId: safetyTarget.id })).status,
+    200,
+    "safety fixture rider requests",
+  );
+let safetyBookings = (await api(safetyDriver)).body.bookings.filter(
+  (b) => b.rideId === safetyTarget.id,
+);
+for (const booking of safetyBookings)
+  eq(
+    (await api(safetyDriver, { action: "accept", bookingId: booking.id }))
+      .status,
+    200,
+    "safety fixture rider confirmed",
+  );
+const safetyBooking = safetyBookings.find((b) => b.riderId === safetyRider);
+const reportMessageId = crypto.randomUUID(),
+  privateMessageId = crypto.randomUUID();
+eq(
+  (
+    await chat(safetyDriver, safetyBooking.id, {
+      clientId: reportMessageId,
+      body: "Reported fixture message",
+    })
+  ).status,
+  201,
+  "reportable message delivered",
+);
+const privateText = `Unreported private context ${prefix}`;
+eq(
+  (
+    await chat(safetyDriver, safetyBooking.id, {
+      clientId: privateMessageId,
+      body: privateText,
+    })
+  ).status,
+  201,
+  "private unreported context delivered",
+);
+const messageConcern = {
+  messageId: reportMessageId,
+  reason: "Other",
+  details: "This is a test-only concern about the selected message.",
+};
+eq(
+  (await community(null, "message-reports", messageConcern)).status,
+  401,
+  "message reports require sign-in",
+);
+eq(
+  (await community(stranger, "message-reports", messageConcern)).status,
+  409,
+  "outsider cannot report private messages",
+);
+eq(
+  (await community(safetyOther, "message-reports", messageConcern)).status,
+  409,
+  "another rider on same ride cannot report another booking's messages",
+);
+eq(
+  (await community(safetyDriver, "message-reports", messageConcern)).status,
+  409,
+  "sender cannot report own message",
+);
+eq(
+  (
+    await community(safetyRider, "message-reports", {
+      ...messageConcern,
+      details: "short",
+    })
+  ).status,
+  400,
+  "message report detail validated",
+);
+eq(
+  (
+    await community(safetyRider, "message-reports", messageConcern, {
+      origin: "https://other.example",
+    })
+  ).status,
+  403,
+  "message reports reject cross-origin writes",
+);
+eq(
+  (await community(safetyRider, "message-reports", messageConcern)).status,
+  201,
+  "recipient reports message",
+);
+eq(
+  (await community(safetyRider, "message-reports", messageConcern)).status,
+  409,
+  "duplicate message report rejected",
+);
+let safetyQueue = (await community(moderator, "reports?review=true")).body
+  .reports;
+let messageReport = safetyQueue.find((r) => r.messageId === reportMessageId);
+eq(messageReport.kind, "message", "message reports appear in unified queue");
+eq(
+  messageReport.messageText,
+  "Reported fixture message",
+  "moderator sees selected evidence",
+);
+eq(
+  JSON.stringify(safetyQueue).includes(privateText),
+  false,
+  "unreported conversation context is not disclosed",
+);
+eq(
+  (await community(safetyDriver, "reports")).body.reports.length,
+  0,
+  "reported sender cannot read reporter explanation",
+);
+eq(
+  (await community(safetyOther, "reports")).body.reports.length,
+  0,
+  "other riders cannot read message report",
+);
+const messageRemoval = {
+  kind: "message",
+  reportId: messageReport.id,
+  resolution: "hide",
+  notes: "Selected test message removed after review.",
+};
+eq(
+  (await community(safetyDriver, "moderation", messageRemoval)).status,
+  403,
+  "sender cannot moderate own report",
+);
+eq(
+  (await community(moderator, "moderation", messageRemoval)).status,
+  200,
+  "moderator removes selected message",
+);
+let thread = (await chat(safetyRider, safetyBooking.id)).body;
+eq(
+  thread.messages.find((m) => m.id === reportMessageId).hidden,
+  true,
+  "recipient sees hidden-message marker",
+);
+eq(
+  thread.messages.find((m) => m.id === reportMessageId).body,
+  "Message removed by a moderator.",
+  "message body redacted from participant payload",
+);
+eq(
+  (await chat(safetyDriver, safetyBooking.id)).body.messages.find(
+    (m) => m.id === reportMessageId,
+  ).hidden,
+  true,
+  "sender also sees removal",
+);
+eq(
+  thread.messages.find((m) => m.id === privateMessageId).body,
+  privateText,
+  "unreported messages remain intact",
+);
+eq(
+  (await api(safetyDriver)).body.rides.find((r) => r.id === safetyTarget.id)
+    .status,
+  "active",
+  "message moderation does not remove ride",
+);
+eq(
+  (await api(safetyRider)).body.bookings.find((b) => b.id === safetyBooking.id)
+    .status,
+  "accepted",
+  "message moderation preserves bookings",
+);
+eq(
+  (await community(moderator, "moderation", messageRemoval)).status,
+  409,
+  "resolved message report cannot be replayed",
+);
+eq(
+  (
+    await chat(safetyDriver, safetyBooking.id, {
+      clientId: reportMessageId,
+      body: "Reported fixture message",
+    })
+  ).status,
+  200,
+  "exact hidden-message retry is idempotent",
+);
+eq(
+  (await chat(safetyRider, safetyBooking.id)).body.messages.find(
+    (m) => m.id === reportMessageId,
+  ).hidden,
+  true,
+  "retry cannot resurrect hidden message",
+);
+eq(
+  (await community(safetyRider, "reports")).body.reports[0].messageText,
+  "Reported fixture message",
+  "reporter retains selected evidence in report history",
+);
+const replyId = crypto.randomUUID();
+eq(
+  (
+    await chat(safetyRider, safetyBooking.id, {
+      clientId: replyId,
+      body: "Another fixture message for dismissal",
+    })
+  ).status,
+  201,
+  "opposite participant sends reportable message",
+);
+eq(
+  (
+    await community(safetyDriver, "message-reports", {
+      ...messageConcern,
+      messageId: replyId,
+    })
+  ).status,
+  201,
+  "driver may report rider message",
+);
+const dismissMessage = (
+  await community(moderator, "reports?review=true")
+).body.reports.find((r) => r.messageId === replyId);
+eq(
+  (
+    await community(moderator, "moderation", {
+      kind: "message",
+      reportId: dismissMessage.id,
+      resolution: "dismiss",
+      notes: "No message removal needed for this fixture.",
+    })
+  ).status,
+  200,
+  "message report may be dismissed",
+);
+eq(
+  (await chat(safetyDriver, safetyBooking.id)).body.messages.find(
+    (m) => m.id === replyId,
+  ).hidden,
+  false,
+  "dismissal keeps message visible",
+);
+
+const rideConcern = {
+  rideId: safetyTarget.id,
+  reason: "Other",
+  details: "Test fixture for reviewing a ride removal and appeal.",
+};
+eq(
+  (
+    await community(safetyDriver, "appeals", {
+      action: "submit",
+      rideId: safetyTarget.id,
+      details: "The ride is still active and should not be appealable.",
+    })
+  ).status,
+  409,
+  "active ride cannot be appealed",
+);
+eq(
+  (await community(safetyRider, "reports", rideConcern)).status,
+  201,
+  "ride report shares the reporting allowance",
+);
+for (let i = 0; i < 3; i++) {
+  const id = crypto.randomUUID();
+  eq(
+    (
+      await chat(safetyDriver, safetyBooking.id, {
+        clientId: id,
+        body: `Shared report quota fixture ${i}`,
+      })
+    ).status,
+    201,
+    "shared report quota message created",
+  );
+  eq(
+    (
+      await community(safetyRider, "message-reports", {
+        ...messageConcern,
+        messageId: id,
+      })
+    ).status,
+    201,
+    "message reports share remaining ride-report allowance",
+  );
+}
+const overReportId = crypto.randomUUID();
+eq(
+  (
+    await chat(safetyDriver, safetyBooking.id, {
+      clientId: overReportId,
+      body: "Excess report quota fixture",
+    })
+  ).status,
+  201,
+  "over-quota report message created",
+);
+eq(
+  (
+    await community(safetyRider, "message-reports", {
+      ...messageConcern,
+      messageId: overReportId,
+    })
+  ).status,
+  429,
+  "ride and message reports share one account quota",
+);
+const rideRemovalReport = (
+  await community(moderator, "reports?review=true")
+).body.reports.find((r) => r.rideId === safetyTarget.id && r.kind === "ride");
+eq(
+  (
+    await community(moderator, "moderation", {
+      reportId: rideRemovalReport.id,
+      resolution: "hide",
+      notes: "Ride removed for the appeal fixture.",
+    })
+  ).status,
+  200,
+  "ride removed for appeal",
+);
+eq(
+  (await api(safetyDriver)).body.rides.find((r) => r.id === safetyTarget.id)
+    .removalReportId,
+  rideRemovalReport.id,
+  "removal records its decision identity",
+);
+const appealInput = {
+  action: "submit",
+  rideId: safetyTarget.id,
+  details:
+    "Please reconsider this test removal; the listing details were accurate.",
+};
+eq(
+  (await community(null, "appeals")).status,
+  401,
+  "appeal history requires identity",
+);
+eq(
+  (await community(stranger, "appeals?review=true")).status,
+  403,
+  "appeal queue requires moderator role",
+);
+eq(
+  (await community(safetyRider, "appeals", appealInput)).status,
+  409,
+  "rider cannot appeal driver's removal",
+);
+eq(
+  (
+    await community(safetyDriver, "appeals", {
+      ...appealInput,
+      details: "short",
+    })
+  ).status,
+  400,
+  "appeal explanation validated",
+);
+eq(
+  (
+    await community(safetyDriver, "appeals", appealInput, {
+      origin: "https://other.example",
+    })
+  ).status,
+  403,
+  "appeals reject cross-origin writes",
+);
+eq(
+  (await community(safetyDriver, "appeals", appealInput)).status,
+  201,
+  "driver appeals removal",
+);
+eq(
+  (await community(safetyDriver, "appeals", appealInput)).status,
+  409,
+  "one appeal per removal decision",
+);
+eq(
+  (await community(safetyRider, "appeals")).body.appeals.length,
+  0,
+  "riders cannot read driver's appeal",
+);
+eq(
+  (await community(stranger, "appeals")).body.appeals.length,
+  0,
+  "unrelated users cannot read appeal",
+);
+let appeal = (await community(safetyDriver, "appeals")).body.appeals[0];
+eq(
+  appeal.removalReportId,
+  rideRemovalReport.id,
+  "appeal binds to actual removal, not client-selected identity",
+);
+eq(
+  (await community(moderator, "appeals?review=true")).body.appeals.some(
+    (a) => a.id === appeal.id,
+  ),
+  true,
+  "moderator can review pending appeal",
+);
+const approval = {
+  action: "review",
+  appealId: appeal.id,
+  decision: "approve",
+  notes: "Removal reversed after reviewing the test explanation.",
+};
+eq(
+  (await community(safetyDriver, "appeals", approval)).status,
+  403,
+  "driver cannot approve own appeal",
+);
+eq(
+  (await community(moderator, "appeals", { ...approval, notes: "" })).status,
+  400,
+  "appeal decision requires explanation",
+);
+const approvalRace = await Promise.all([
+  community(moderator, "appeals", approval),
+  community(moderator, "appeals", approval),
+]);
+eq(
+  approvalRace.filter((r) => r.status === 200).length,
+  1,
+  "only one simultaneous appeal decision succeeds",
+);
+eq(
+  approvalRace.filter((r) => r.status === 409).length,
+  1,
+  "duplicate simultaneous appeal decision rejected",
+);
+eq(
+  (await api(safetyDriver)).body.rides.find((r) => r.id === safetyTarget.id)
+    .status,
+  "active",
+  "appeal restores listing",
+);
+eq(
+  (await search(null, { origin: safetyRide.origin })).body.rides.some(
+    (r) => r.id === safetyTarget.id,
+  ),
+  true,
+  "restored ride returns to discovery",
+);
+eq(
+  (await api(safetyRider)).body.bookings.find((b) => b.id === safetyBooking.id)
+    .status,
+  "cancelled",
+  "appeal does not revive cancelled seat",
+);
+eq(
+  (await chat(safetyRider, safetyBooking.id)).body.canSend,
+  false,
+  "appeal does not reopen cancelled rider's chat",
+);
+eq(
+  (await community(safetyDriver, "appeals")).body.appeals[0].status,
+  "approved",
+  "driver can track approved outcome",
+);
+eq(
+  (await community(safetyOther, "reports", rideConcern)).status,
+  201,
+  "new reporter may flag restored listing",
+);
+const secondRemoval = (
+  await community(moderator, "reports?review=true")
+).body.reports.find(
+  (r) =>
+    r.rideId === safetyTarget.id && r.kind === "ride" && r.status === "open",
+);
+eq(
+  (
+    await community(moderator, "moderation", {
+      reportId: secondRemoval.id,
+      resolution: "hide",
+      notes: "A separate later removal decision.",
+    })
+  ).status,
+  200,
+  "restored ride may receive a new removal decision",
+);
+eq(
+  (await community(moderator, "appeals", approval)).status,
+  409,
+  "old approval cannot reverse newer removal",
+);
+eq(
+  (await api(safetyDriver)).body.rides.find((r) => r.id === safetyTarget.id)
+    .status,
+  "removed",
+  "newer removal survives old appeal replay",
+);
+eq(
+  (await community(safetyDriver, "appeals", appealInput)).status,
+  201,
+  "new removal decision permits a new appeal",
+);
+const secondAppeal = (
+  await community(safetyDriver, "appeals")
+).body.appeals.find((a) => a.status === "pending");
+eq(
+  (
+    await community(moderator, "appeals", {
+      action: "review",
+      appealId: secondAppeal.id,
+      decision: "deny",
+      notes: "Later removal upheld after test review.",
+    })
+  ).status,
+  200,
+  "moderator may uphold removal",
+);
+eq(
+  (await api(safetyDriver)).body.rides.find((r) => r.id === safetyTarget.id)
+    .status,
+  "removed",
+  "denied appeal keeps listing removed",
+);
+eq(
+  (await community(safetyDriver, "appeals", appealInput)).status,
+  409,
+  "denied removal cannot be appealed repeatedly",
+);
+
+async function removedAppealFixture(suffix) {
+  const fixture = { ...safetyRide, origin: `${prefix} Appeal ${suffix}` };
+  eq(
+    (await api(safetyDriver, { action: "post", ride: fixture })).status,
+    201,
+    "extra appeal fixture created",
+  );
+  const target = (await api(safetyDriver)).body.rides.find(
+    (r) => r.origin === fixture.origin,
+  );
+  eq(
+    (
+      await community(stranger, "reports", {
+        ...rideConcern,
+        rideId: target.id,
+      })
+    ).status,
+    201,
+    "extra appeal fixture reported",
+  );
+  const report = (
+    await community(moderator, "reports?review=true")
+  ).body.reports.find((r) => r.rideId === target.id && r.kind === "ride");
+  eq(
+    (
+      await community(moderator, "moderation", {
+        reportId: report.id,
+        resolution: "hide",
+        notes: "Removal for additional appeal verification.",
+      })
+    ).status,
+    200,
+    "extra fixture removed",
+  );
+  return target;
+}
+const withdrawn = await removedAppealFixture("withdraw");
+eq(
+  (
+    await community(safetyDriver, "appeals", {
+      ...appealInput,
+      rideId: withdrawn.id,
+    })
+  ).status,
+  201,
+  "third appeal within allowance accepted",
+);
+const pendingWithdrawn = (
+  await community(safetyDriver, "appeals")
+).body.appeals.find((a) => a.rideId === withdrawn.id);
+eq(
+  (await api(safetyDriver, { action: "cancelRide", rideId: withdrawn.id }))
+    .status,
+  200,
+  "driver can cancel removed ride with pending appeal",
+);
+eq(
+  (
+    await community(moderator, "appeals", {
+      ...approval,
+      appealId: pendingWithdrawn.id,
+    })
+  ).status,
+  409,
+  "approval cannot restore driver-cancelled ride",
+);
+eq(
+  (await api(safetyDriver)).body.rides.find((r) => r.id === withdrawn.id)
+    .status,
+  "cancelled",
+  "cancelled ride stays cancelled after stale approval",
+);
+const overAppeal = await removedAppealFixture("quota");
+eq(
+  (
+    await community(safetyDriver, "appeals", {
+      ...appealInput,
+      rideId: overAppeal.id,
+    })
+  ).status,
+  429,
+  "appeal submission quota enforced",
+);
+// Editing: ownership, listing versions, protected agreed details, and capacity races.
+const editDriver = `${prefix}-edit-driver`,
+  editRiderA = `${prefix}-edit-a`,
+  editRiderB = `${prefix}-edit-b`,
+  editQuotaDriver = `${prefix}-edit-quota`;
+for (const user of [editDriver, editRiderA, editRiderB, editQuotaDriver])
+  eq(
+    (
+      await community(user, "profile", {
+        displayName: "Edit Fixture",
+        campus: "Edit University",
+      })
+    ).status,
+    200,
+    "edit fixture profile created",
+  );
+const editPayload = {
+  ...ride,
+  origin: `${prefix} Edit Campus`,
+  destination: "Original destination",
+  seats: 2,
+};
+eq(
+  (await api(editDriver, { action: "post", ride: editPayload })).status,
+  201,
+  "editable ride created",
+);
+let editable = (await api(editDriver)).body.rides.find(
+  (r) => r.origin === editPayload.origin,
+);
+eq(editable.version, 1, "new listings start with version one");
+eq(
+  (
+    await community(editRiderA, "loop", {
+      action: "request",
+      rideId: editable.id,
+    })
+  ).status,
+  400,
+  "seat request requires the version the rider saw",
+);
+eq(
+  (
+    await api(stranger, {
+      action: "edit",
+      rideId: editable.id,
+      ride: editPayload,
+    })
+  ).status,
+  409,
+  "another user cannot edit listing",
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      ride: { ...editPayload, priceCents: -1 },
+    })
+  ).status,
+  400,
+  "edit data validated",
+);
+const changedPayload = {
+  ...editPayload,
+  destination: "Updated destination",
+  priceCents: 1900,
+};
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      expectedVersion: 1,
+      ride: changedPayload,
+    })
+  ).status,
+  200,
+  "driver may edit core details before requests",
+);
+editable = (await api(editDriver)).body.rides.find((r) => r.id === editable.id);
+eq(editable.version, 2, "edit advances listing version");
+eq(editable.destination, "Updated destination", "new route persisted");
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      expectedVersion: 1,
+      ride: editPayload,
+    })
+  ).status,
+  409,
+  "stale edit cannot overwrite newer listing",
+);
+eq(
+  (
+    await api(editRiderA, {
+      action: "request",
+      rideId: editable.id,
+      expectedVersion: 1,
+    })
+  ).status,
+  409,
+  "stale ride card cannot book changed trip",
+);
+eq(
+  (
+    await api(editRiderA, {
+      action: "request",
+      rideId: editable.id,
+      expectedVersion: 2,
+    })
+  ).status,
+  200,
+  "current listing version may be requested",
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      expectedVersion: 2,
+      ride: { ...changedPayload, destination: "Different agreed route" },
+    })
+  ).status,
+  409,
+  "pending rider locks route",
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      expectedVersion: 2,
+      ride: { ...changedPayload, priceCents: 2000 },
+    })
+  ).status,
+  409,
+  "pending rider locks price",
+);
+const operationalUpdate = {
+  ...changedPayload,
+  car: "Blue Subaru",
+  notes: "Meet at the signed entrance.",
+};
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      expectedVersion: 2,
+      ride: operationalUpdate,
+    })
+  ).status,
+  200,
+  "driver may update car and notes with active requests",
+);
+editable = (await api(editDriver)).body.rides.find((r) => r.id === editable.id);
+eq(editable.car, "Blue Subaru", "car edit persisted");
+eq(editable.notes, operationalUpdate.notes, "note edit persisted");
+let editBookings = (await api(editDriver)).body.bookings.filter(
+  (b) => b.rideId === editable.id,
+);
+eq(
+  (await api(editDriver, { action: "accept", bookingId: editBookings[0].id }))
+    .status,
+  200,
+  "pending booking can be approved after operational edit",
+);
+eq(
+  (
+    await api(editRiderB, {
+      action: "request",
+      rideId: editable.id,
+      expectedVersion: editable.version,
+    })
+  ).status,
+  200,
+  "second rider sees current version",
+);
+editBookings = (await api(editDriver)).body.bookings.filter(
+  (b) => b.rideId === editable.id,
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "accept",
+      bookingId: editBookings.find((b) => b.riderId === editRiderB).id,
+    })
+  ).status,
+  200,
+  "second rider confirmed",
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      expectedVersion: editable.version,
+      ride: { ...operationalUpdate, seats: 1 },
+    })
+  ).status,
+  409,
+  "driver cannot shrink below confirmed seats",
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: editable.id,
+      expectedVersion: editable.version,
+      ride: { ...operationalUpdate, seats: 3 },
+    })
+  ).status,
+  200,
+  "driver may increase capacity without changing rider agreement",
+);
+
+const coreRaceRide = { ...editPayload, origin: `${prefix} Core Race` };
+eq(
+  (await api(editDriver, { action: "post", ride: coreRaceRide })).status,
+  201,
+  "core-change race fixture created",
+);
+const coreRaceTarget = (await api(editDriver)).body.rides.find(
+  (r) => r.origin === coreRaceRide.origin,
+);
+const coreRace = await Promise.all([
+  api(editDriver, {
+    action: "edit",
+    rideId: coreRaceTarget.id,
+    expectedVersion: 1,
+    ride: { ...coreRaceRide, destination: "Changed during booking" },
+  }),
+  api(editRiderA, {
+    action: "request",
+    rideId: coreRaceTarget.id,
+    expectedVersion: 1,
+  }),
+]);
+eq(
+  coreRace.filter((r) => r.status === 200).length,
+  1,
+  "edit/book race has only one successful operation",
+);
+eq(
+  coreRace.filter((r) => r.status === 409).length,
+  1,
+  "other edit/book race operation receives a conflict",
+);
+
+const capacityRaceRide = { ...editPayload, origin: `${prefix} Capacity Race` };
+eq(
+  (await api(editDriver, { action: "post", ride: capacityRaceRide })).status,
+  201,
+  "capacity edit race fixture created",
+);
+const capacityTarget = (await api(editDriver)).body.rides.find(
+  (r) => r.origin === capacityRaceRide.origin,
+);
+for (const user of [editRiderA, editRiderB])
+  eq(
+    (await api(user, { action: "request", rideId: capacityTarget.id })).status,
+    200,
+    "capacity fixture request created",
+  );
+let capacityBookings = (await api(editDriver)).body.bookings.filter(
+  (b) => b.rideId === capacityTarget.id,
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "accept",
+      bookingId: capacityBookings[0].id,
+    })
+  ).status,
+  200,
+  "first capacity fixture seat confirmed",
+);
+const capacityRace = await Promise.all([
+  api(editDriver, {
+    action: "edit",
+    rideId: capacityTarget.id,
+    expectedVersion: 1,
+    ride: { ...capacityRaceRide, seats: 1 },
+  }),
+  api(editDriver, { action: "accept", bookingId: capacityBookings[1].id }),
+]);
+eq(
+  capacityRace.filter((r) => r.status === 200).length,
+  1,
+  "only edit or final approval can consume capacity",
+);
+eq(
+  capacityRace.filter((r) => r.status === 409).length,
+  1,
+  "conflicting capacity operation rejected",
+);
+const capacityState = (await api(editDriver)).body.rides.find(
+  (r) => r.id === capacityTarget.id,
+);
+eq(
+  capacityState.seats >= capacityState.accepted,
+  true,
+  "concurrent edit and approval never overbook",
+);
+eq(
+  (await api(editDriver, { action: "cancelRide", rideId: capacityTarget.id }))
+    .status,
+  200,
+  "edited ride remains cancellable",
+);
+eq(
+  (
+    await api(editDriver, {
+      action: "edit",
+      rideId: capacityTarget.id,
+      expectedVersion: capacityState.version,
+      ride: capacityRaceRide,
+    })
+  ).status,
+  409,
+  "cancelled listing cannot be edited back to active",
+);
+
+const quotaEditPayload = { ...editPayload, origin: `${prefix} Edit Quota` };
+eq(
+  (await api(editQuotaDriver, { action: "post", ride: quotaEditPayload }))
+    .status,
+  201,
+  "edit quota fixture created",
+);
+const quotaEditTarget = (await api(editQuotaDriver)).body.rides[0];
+const editHourRemaining = 3600 - (Math.floor(Date.now() / 1000) % 3600);
+if (editHourRemaining < 10)
+  await new Promise((resolve) =>
+    setTimeout(resolve, (editHourRemaining + 1) * 1000),
+  );
+for (let i = 0; i < 20; i++)
+  eq(
+    (
+      await api(editQuotaDriver, {
+        action: "edit",
+        rideId: quotaEditTarget.id,
+        expectedVersion: i + 1,
+        ride: { ...quotaEditPayload, notes: `Operational note ${i}` },
+      })
+    ).status,
+    200,
+    "edit allowance permits valid updates",
+  );
+eq(
+  (
+    await api(editQuotaDriver, {
+      action: "edit",
+      rideId: quotaEditTarget.id,
+      expectedVersion: 21,
+      ride: quotaEditPayload,
+    })
+  ).status,
+  429,
+  "edit quota enforced",
+);
+eq(
+  (
+    await api(editQuotaDriver, {
+      action: "cancelRide",
+      rideId: quotaEditTarget.id,
+    })
+  ).status,
+  200,
+  "cancellation remains available after edit quota",
+);
 console.log(
-  `PASS: ${assertions} API assertions (identity, booking races, private messaging, moderation, search pagination, and durable action limits).`,
+  `PASS: ${assertions} API assertions (identity, evidence privacy, appeals, quotas, versioned edits, and edit/book races).`,
 );

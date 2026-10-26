@@ -11,6 +11,8 @@ export type Ride = {
   car: string;
   notes: string;
   status: string;
+  removalReportId?: string | null;
+  version: number;
   createdAt: string;
   accepted: number;
 };
@@ -30,6 +32,7 @@ export type Message = {
   senderName: string;
   body: string;
   createdAt: string;
+  hidden?: boolean;
 };
 export type Conversation = { messages: Message[]; canSend: boolean };
 export type Snapshot = {
@@ -58,4 +61,21 @@ export type Report = {
   origin: string;
   destination: string;
   driverName: string;
+  kind?: "ride" | "message";
+  messageId?: string;
+  messageText?: string;
+  messageSenderName?: string;
+  rideStatus?: string;
+};
+export type Appeal = {
+  id: string;
+  rideId: string;
+  removalReportId: string;
+  driverName: string;
+  origin: string;
+  destination: string;
+  details: string;
+  status: string;
+  decisionNotes: string | null;
+  createdAt: string;
 };

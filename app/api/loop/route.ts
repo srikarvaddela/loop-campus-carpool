@@ -137,13 +137,62 @@ export async function POST(req: Request) {
       return reply({ ok: true }, 201);
     }
     let result;
-    if (a.action === "request") {
+    if (a.action === "edit") {
+      if (
+        !(await db
+          .prepare(
+            "SELECT id FROM rides WHERE id=? AND driver_id=? AND status='active' AND departure>?",
+          )
+          .bind(a.rideId, uid, now)
+          .first())
+      )
+        return reply(
+          { error: "Only the driver can edit an active upcoming ride." },
+          409,
+        );
+      const limited = await rateLimit(uid, "edit");
+      if (limited) return limited;
+      const r = a.ride;
+      const departure = new Date(r.departure).toISOString();
+      // Check committed capacity and active-rider trip details in the same statement as the edit.
+      result = await db
+        .prepare(
+          `UPDATE rides SET origin=?,destination=?,departure=?,seats=?,price_cents=?,car=?,notes=?,version=version+1 WHERE id=? AND driver_id=? AND status='active' AND departure>? AND ? >= (SELECT COUNT(*) FROM bookings b WHERE b.ride_id=rides.id AND b.status='accepted') AND ((origin=? AND destination=? AND departure=? AND price_cents=?) OR NOT EXISTS(SELECT 1 FROM bookings b WHERE b.ride_id=rides.id AND b.status IN ('pending','accepted'))) AND version=?`,
+        )
+        .bind(
+          r.origin,
+          r.destination,
+          departure,
+          r.seats,
+          r.priceCents,
+          r.car,
+          r.notes,
+          a.rideId,
+          uid,
+          now,
+          r.seats,
+          r.origin,
+          r.destination,
+          departure,
+          r.priceCents,
+          a.expectedVersion,
+        )
+        .run();
+      if (!result.meta.changes)
+        return reply(
+          {
+            error:
+              "The ride changed. Close the editor and refresh. Keep enough confirmed seats, and preserve route, time, and price while requests are active.",
+          },
+          409,
+        );
+    } else if (a.action === "request") {
       const limited = await rateLimit(uid, "request");
       if (limited) return limited;
       // A unique (ride, rider) row prevents duplicate requests. Cancelled/declined requests can be renewed.
       result = await db
         .prepare(
-          `INSERT INTO bookings (id,ride_id,rider_id,rider_name,status,created_at) SELECT ?,r.id,?,?,'pending',? FROM rides r WHERE r.id = ? AND r.status = 'active' AND r.departure > ? AND r.driver_id != ? AND (SELECT COUNT(*) FROM bookings WHERE ride_id = r.id AND status = 'accepted') < r.seats ON CONFLICT(ride_id,rider_id) DO UPDATE SET status = 'pending',created_at = excluded.created_at WHERE bookings.status IN ('cancelled','declined')`,
+          `INSERT INTO bookings (id,ride_id,rider_id,rider_name,status,created_at) SELECT ?,r.id,?,?,'pending',? FROM rides r WHERE r.id = ? AND r.status = 'active' AND r.departure > ? AND r.driver_id != ? AND r.version=? AND (SELECT COUNT(*) FROM bookings WHERE ride_id = r.id AND status = 'accepted') < r.seats ON CONFLICT(ride_id,rider_id) DO UPDATE SET status = 'pending',created_at = excluded.created_at WHERE bookings.status IN ('cancelled','declined')`,
         )
         .bind(
           crypto.randomUUID(),
@@ -153,6 +202,7 @@ export async function POST(req: Request) {
           a.rideId,
           now,
           uid,
+          a.expectedVersion,
         )
         .run();
     } else if (a.action === "accept") {
@@ -181,7 +231,7 @@ export async function POST(req: Request) {
       const results = await db.batch([
         db
           .prepare(
-            `UPDATE rides SET status = 'cancelled' WHERE id = ? AND driver_id = ? AND status = 'active'`,
+            `UPDATE rides SET status = 'cancelled',version=version+1 WHERE id = ? AND driver_id = ? AND status IN ('active','removed')`,
           )
           .bind(a.rideId, uid),
         db

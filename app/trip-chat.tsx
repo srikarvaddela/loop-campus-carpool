@@ -6,6 +6,7 @@ import {
   MessageCircle,
   Send,
   RefreshCw,
+  Flag,
 } from "lucide-react";
 import type { Conversation, Message } from "../lib/types";
 
@@ -14,6 +15,7 @@ type Props = {
   userId: string;
   title: string;
   partner: string;
+  onReport?: (message: Message) => void;
   demo?: {
     messages: Message[];
     canSend: boolean;
@@ -27,6 +29,7 @@ export default function TripChat({
   title,
   partner,
   demo,
+  onReport,
 }: Props) {
   const [conversation, setConversation] = useState<Conversation>({
     messages: [],
@@ -142,7 +145,8 @@ export default function TripChat({
       </div>
       <div className="chat-privacy">
         <LockKeyhole size={12} />
-        Only you and the other participant can read this conversation.
+        This conversation is private. Messages you report are shared with
+        moderators.
       </div>
       {(sendError || error) && (
         <div className="chat-error" role="alert">
@@ -195,7 +199,18 @@ export default function TripChat({
               <span className="message-sender">
                 {m.senderId === userId ? "You" : m.senderName}
               </span>
-              <p>{m.body}</p>
+              <p className={m.hidden ? "hidden-message" : ""}>{m.body}</p>
+              {m.senderId !== userId && !m.hidden && onReport && (
+                <button
+                  className="message-report-action"
+                  type="button"
+                  onClick={() => onReport(m)}
+                  aria-label={`Report message from ${m.senderName}`}
+                >
+                  <Flag size={11} />
+                  Report message
+                </button>
+              )}
               <time dateTime={m.createdAt}>
                 {new Date(m.createdAt).toLocaleString("en-US", {
                   month: "short",

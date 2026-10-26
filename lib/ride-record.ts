@@ -13,6 +13,8 @@ export function rideRecord(r: Record<string, unknown>): Ride {
     car: String(r.car),
     notes: String(r.notes),
     status: String(r.status),
+    removalReportId: r.removal_report_id ? String(r.removal_report_id) : null,
+    version: Number(r.version),
     createdAt: String(r.created_at),
     accepted: Number(r.accepted),
   };

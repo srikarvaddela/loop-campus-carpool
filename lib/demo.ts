@@ -1,4 +1,4 @@
-import type { Snapshot } from "./types";
+import type { Snapshot, Message, Report } from "./types";
 export function demoSnapshot(): Snapshot {
   const departure = (days: number, hour: number) => {
     const d = new Date();
@@ -87,7 +87,7 @@ export function demoSnapshot(): Snapshot {
       "A sample ride you are driving. Open Requests to try approving a rider.",
     ],
   ] as const;
-  return {
+  const snapshot: Snapshot = {
     user: { userId: "demo-you", displayName: "You" },
     profile: { displayName: "You", campus: "Example University" },
     isModerator: true,
@@ -119,6 +119,7 @@ export function demoSnapshot(): Snapshot {
         status: "active",
         createdAt: now,
         accepted: 0,
+        version: 1,
       }),
     ),
     bookings: [
@@ -132,4 +133,74 @@ export function demoSnapshot(): Snapshot {
       },
     ],
   };
+  snapshot.rides.push({
+    id: "demo-appeal-ride",
+    driverId: "demo-you",
+    driverName: "You",
+    origin: "Campus · North Library",
+    campus: "Example University",
+    destination: "Madison · Downtown",
+    departure: departure(5, 11),
+    seats: 2,
+    priceCents: 1400,
+    car: "Honda Accord",
+    notes: "A fictional removed ride for trying the appeal process.",
+    status: "removed",
+    removalReportId: "demo-appeal-removal",
+    createdAt: now,
+    accepted: 0,
+    version: 1,
+  });
+  return snapshot;
+}
+
+export function demoConversations(): Record<string, Message[]> {
+  return {
+    "demo-booking": [
+      {
+        id: "sample-message",
+        bookingId: "demo-booking",
+        senderId: "sam",
+        senderName: "Sam Brooks",
+        body: "Could we meet at the north entrance instead? This is a fictional demo message.",
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  };
+}
+export function demoSafetyReports(): (Report & { isMine?: boolean })[] {
+  return [
+    {
+      id: "sample-report",
+      rideId: "demo-4",
+      kind: "ride",
+      reason: "Misleading listing",
+      details:
+        "This is a fictional report to demonstrate reviewing a concern. The pickup point and the driver’s note disagree.",
+      status: "open",
+      resolution: null,
+      resolutionNotes: null,
+      createdAt: new Date().toISOString(),
+      origin: "Campus · West Residence",
+      destination: "Chicago · Downtown",
+      driverName: "Alex Rivera",
+      isMine: false,
+    },
+    {
+      id: "demo-appeal-removal",
+      rideId: "demo-appeal-ride",
+      kind: "ride",
+      reason: "Misleading listing",
+      details: "Fictional removal decision for demonstrating driver appeals.",
+      status: "resolved",
+      resolution: "hide",
+      resolutionNotes: "Demo listing removed for review.",
+      createdAt: new Date().toISOString(),
+      origin: "Campus · North Library",
+      destination: "Madison · Downtown",
+      driverName: "You",
+      rideStatus: "removed",
+      isMine: false,
+    },
+  ];
 }

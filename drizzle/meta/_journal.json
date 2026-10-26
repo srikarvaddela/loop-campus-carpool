@@ -29,6 +29,20 @@
       "when": 1792966398945,
       "tag": "0003_woozy_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792967806105,
+      "tag": "0004_daily_darkstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792973411540,
+      "tag": "0005_lowly_justin_hammer",
+      "breakpoints": true
     }
   ]
 }

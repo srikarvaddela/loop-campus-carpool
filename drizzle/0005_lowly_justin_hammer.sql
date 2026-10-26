@@ -1,0 +1,1 @@
+ALTER TABLE `rides` ADD `version` integer DEFAULT 1 NOT NULL;

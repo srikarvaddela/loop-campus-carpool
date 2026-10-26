@@ -24,27 +24,60 @@ export async function GET(req: Request) {
   try {
     if (!env.DB) throw new Error("Database unavailable");
     const sql = review
-      ? `SELECT p.*,r.origin,r.destination,r.driver_name FROM reports p JOIN rides r ON r.id=p.ride_id ORDER BY CASE WHEN p.status='open' THEN 0 ELSE 1 END,p.created_at DESC LIMIT 100`
-      : `SELECT p.*,r.origin,r.destination,r.driver_name FROM reports p JOIN rides r ON r.id=p.ride_id WHERE p.reporter_id=? ORDER BY p.created_at DESC LIMIT 100`;
+      ? `SELECT p.*,r.origin,r.destination,r.driver_name,r.status AS ride_status FROM reports p JOIN rides r ON r.id=p.ride_id ORDER BY CASE WHEN p.status='open' THEN 0 ELSE 1 END,p.created_at DESC LIMIT 100`
+      : `SELECT p.*,r.origin,r.destination,r.driver_name,r.status AS ride_status FROM reports p JOIN rides r ON r.id=p.ride_id WHERE p.reporter_id=? ORDER BY p.created_at DESC LIMIT 100`;
     const statement = env.DB.prepare(sql);
     const result = await (
       review ? statement : statement.bind(user.userId)
     ).all();
-    return reply({
-      reports: result.results.map((p) => ({
-        id: p.id,
-        rideId: p.ride_id,
-        reason: p.reason,
-        details: p.details,
-        status: p.status,
-        resolution: p.resolution,
-        resolutionNotes: p.resolution_notes,
-        createdAt: p.created_at,
-        origin: p.origin,
-        destination: p.destination,
-        driverName: p.driver_name,
-      })),
-    });
+    const rideReports = result.results.map((p) => ({
+      id: p.id,
+      rideId: p.ride_id,
+      reason: p.reason,
+      details: p.details,
+      status: p.status,
+      resolution: p.resolution,
+      resolutionNotes: p.resolution_notes,
+      createdAt: p.created_at,
+      origin: p.origin,
+      destination: p.destination,
+      driverName: p.driver_name,
+      kind: "ride",
+      rideStatus: p.ride_status,
+    }));
+    const messageStatement = env.DB.prepare(
+      `SELECT p.*,m.body AS message_text,m.sender_name,b.ride_id,r.origin,r.destination,r.driver_name,r.status AS ride_status FROM message_reports p JOIN messages m ON m.id=p.message_id JOIN bookings b ON b.id=m.booking_id JOIN rides r ON r.id=b.ride_id ${review ? "" : "WHERE p.reporter_id=?"} ORDER BY CASE WHEN p.status='open' THEN 0 ELSE 1 END,p.created_at DESC LIMIT 100`,
+    );
+    const messageResult = await (
+      review ? messageStatement : messageStatement.bind(user.userId)
+    ).all();
+    const messageReports = messageResult.results.map((p) => ({
+      id: p.id,
+      rideId: p.ride_id,
+      reason: p.reason,
+      details: p.details,
+      status: p.status,
+      resolution: p.resolution,
+      resolutionNotes: p.resolution_notes,
+      createdAt: p.created_at,
+      origin: p.origin,
+      destination: p.destination,
+      driverName: p.driver_name,
+      kind: "message",
+      messageId: p.message_id,
+      messageText: p.message_text,
+      messageSenderName: p.sender_name,
+      rideStatus: p.ride_status,
+    }));
+    const reports = [...rideReports, ...messageReports]
+      .sort(
+        (a, b) =>
+          (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) ||
+          String(b.createdAt).localeCompare(String(a.createdAt)) ||
+          String(b.id).localeCompare(String(a.id)),
+      )
+      .slice(0, 100);
+    return reply({ reports });
   } catch (error) {
     console.error("Reports read failed", error);
     return reply({ error: "Couldn't load reports." }, 503);

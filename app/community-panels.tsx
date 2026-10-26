@@ -8,7 +8,7 @@ import {
   RefreshCw,
   CheckCircle2,
 } from "lucide-react";
-import type { Profile, Report } from "../lib/types";
+import type { Profile, Report, Message } from "../lib/types";
 
 export function ProfileForm({
   profile,
@@ -106,12 +106,14 @@ export function ReportForm({
   onSubmit,
   onSaved,
   rideId,
+  targetMessage,
 }: {
   destination: string;
   demo: boolean;
   onSubmit?: (reason: string, details: string) => void;
   onSaved: () => void;
   rideId: string;
+  targetMessage?: Message;
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -119,6 +121,7 @@ export function ReportForm({
     <ReportFields
       destination={destination}
       rideId={rideId}
+      targetMessage={targetMessage}
       busy={busy}
       error={error}
       submit={async (reason, details, rideId) => {
@@ -128,11 +131,18 @@ export function ReportForm({
           if (demo) {
             onSubmit?.(reason, details);
           } else {
-            const res = await fetch("/api/reports", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ rideId, reason, details }),
-            });
+            const res = await fetch(
+              targetMessage ? "/api/message-reports" : "/api/reports",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(
+                  targetMessage
+                    ? { messageId: targetMessage.id, reason, details }
+                    : { rideId, reason, details },
+                ),
+              },
+            );
             const data = (await res.json()) as { error?: string };
             if (!res.ok)
               throw new Error(data.error || "Couldn't submit your report.");
@@ -156,11 +166,13 @@ function ReportFields({
   error,
   submit,
   rideId,
+  targetMessage,
 }: {
   destination: string;
   busy: boolean;
   error: string;
   rideId?: string;
+  targetMessage?: Message;
   submit: (reason: string, details: string, rideId?: string) => Promise<void>;
 }) {
   return (
@@ -173,17 +185,27 @@ function ReportFields({
       }}
     >
       <p className="form-intro">
-        Report a concern about the ride to <strong>{destination}</strong>. Your
-        report is shared with moderators, not the driver.
+        Report a concern about{" "}
+        {targetMessage ? "this message on the ride to" : "the ride to"}{" "}
+        <strong>{destination}</strong>. Your report is shared with moderators
+        for review.
       </p>
+      {targetMessage && (
+        <blockquote className="reported-message-preview">
+          <strong>{targetMessage.senderName}</strong>
+          <p>{targetMessage.body}</p>
+          <small>Only this reported message is shared with moderators.</small>
+        </blockquote>
+      )}
       <label>
         Reason
         <select name="reason">
-          {["Unsafe behavior", "Misleading listing", "Spam", "Other"].map(
-            (r) => (
-              <option key={r}>{r}</option>
-            ),
-          )}
+          {(targetMessage
+            ? ["Unsafe behavior", "Harassment", "Spam", "Other"]
+            : ["Unsafe behavior", "Misleading listing", "Spam", "Other"]
+          ).map((r) => (
+            <option key={r}>{r}</option>
+          ))}
         </select>
       </label>
       <label>
@@ -218,7 +240,7 @@ function ReportFields({
   );
 }
 
-type DemoReports = {
+export type DemoReports = {
   reports: (Report & { isMine?: boolean })[];
   resolve: (id: string, resolution: "hide" | "dismiss", notes: string) => void;
 };
@@ -273,7 +295,11 @@ export function ReportsPanel({
       ? demo.reports
       : demo.reports.filter((r) => r.isMine)
     : reports;
-  async function resolve(e: FormEvent<HTMLFormElement>, id: string) {
+  async function resolve(
+    e: FormEvent<HTMLFormElement>,
+    id: string,
+    kind: Report["kind"],
+  ) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const resolution = String(f.get("resolution")) as "hide" | "dismiss";
@@ -286,7 +312,12 @@ export function ReportsPanel({
         const res = await fetch("/api/moderation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reportId: id, resolution, notes }),
+          body: JSON.stringify({
+            reportId: id,
+            resolution,
+            notes,
+            kind: kind || "ride",
+          }),
         });
         const data = (await res.json()) as { error?: string };
         if (!res.ok) throw new Error(data.error || "Couldn't resolve report.");
@@ -328,7 +359,7 @@ export function ReportsPanel({
       </div>
       <p className="reports-intro">
         {review
-          ? "Review concerns fairly. Removing a ride cancels its seat requests and closes new messages."
+          ? "Review concerns fairly. Message removal keeps the ride; ride removal cancels bookings and closes messaging."
           : "Track the reports you submitted. Other members cannot read your reports."}
       </p>
       {error && (
@@ -356,7 +387,10 @@ export function ReportsPanel({
           {shown.map((r) => (
             <article className="report-card" key={r.id}>
               <div className="report-heading">
-                <strong>{r.reason}</strong>
+                <strong>
+                  {r.kind === "message" ? "Message · " : "Ride · "}
+                  {r.reason}
+                </strong>
                 <span
                   className={
                     "status " + (r.status === "open" ? "pending" : "accepted")
@@ -369,11 +403,25 @@ export function ReportsPanel({
                 {r.origin} → {r.destination}
               </p>
               <p className="report-description">{r.details}</p>
+              {r.kind === "message" && (
+                <blockquote className="reported-message-preview">
+                  <strong>{r.messageSenderName}</strong>
+                  <p>{r.messageText}</p>
+                  <small>
+                    Reported message only · the rest of the conversation is
+                    private.
+                  </small>
+                </blockquote>
+              )}
               {r.status === "resolved" ? (
                 <div className="resolution-note">
                   <strong>
                     {r.resolution === "hide"
-                      ? "Ride removed"
+                      ? r.kind === "message"
+                        ? "Message removed"
+                        : r.rideStatus === "active"
+                          ? "Ride restored after appeal"
+                          : "Ride removed"
                       : "Report dismissed"}
                   </strong>
                   <p>{r.resolutionNotes}</p>
@@ -381,7 +429,7 @@ export function ReportsPanel({
               ) : review ? (
                 <form
                   className="review-form"
-                  onSubmit={(e) => void resolve(e, r.id)}
+                  onSubmit={(e) => void resolve(e, r.id, r.kind)}
                 >
                   <label>
                     Decision
@@ -390,7 +438,9 @@ export function ReportsPanel({
                         Dismiss report — keep ride
                       </option>
                       <option value="hide">
-                        Remove ride and cancel bookings
+                        {r.kind === "message"
+                          ? "Remove message — keep ride"
+                          : "Remove ride and cancel bookings"}
                       </option>
                     </select>
                   </label>

@@ -26,7 +26,17 @@ export const postRideSchema = z
   });
 export const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("post"), ride: postRideSchema }),
-  z.object({ action: z.literal("request"), rideId: z.string().min(1) }),
+  z.object({
+    action: z.literal("edit"),
+    expectedVersion: z.number().int().min(1),
+    rideId: z.string().min(1).max(100),
+    ride: postRideSchema,
+  }),
+  z.object({
+    action: z.literal("request"),
+    rideId: z.string().min(1),
+    expectedVersion: z.number().int().min(1),
+  }),
   z.object({ action: z.literal("accept"), bookingId: z.string().min(1) }),
   z.object({ action: z.literal("decline"), bookingId: z.string().min(1) }),
   z.object({

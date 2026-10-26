@@ -2,10 +2,12 @@ import { env } from "cloudflare:workers";
 
 const policies = {
   post: { max: 10, seconds: 3600, label: "ride posts" },
+  edit: { max: 20, seconds: 3600, label: "ride edits" },
   request: { max: 30, seconds: 3600, label: "seat requests" },
   message: { max: 30, seconds: 60, label: "messages" },
   report: { max: 5, seconds: 3600, label: "reports" },
   profile: { max: 20, seconds: 3600, label: "profile updates" },
+  appeal: { max: 3, seconds: 3600, label: "ride appeals" },
 } as const;
 
 // One row per account/action. This conditional UPSERT serializes concurrent quota claims in D1.

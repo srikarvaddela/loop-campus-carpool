@@ -20,6 +20,8 @@ export const rides = sqliteTable(
     car: text("car").notNull(),
     notes: text("notes").notNull().default(""),
     status: text("status").notNull().default("active"),
+    removalReportId: text("removal_report_id"),
+    version: integer("version").notNull().default(1),
     createdAt: text("created_at").notNull(),
   },
   (t) => [
@@ -56,6 +58,7 @@ export const messages = sqliteTable(
     senderId: text("sender_id").notNull(),
     senderName: text("sender_name").notNull(),
     body: text("body").notNull(),
+    hiddenAt: text("hidden_at"),
     createdAt: text("created_at").notNull(),
   },
   (t) => [index("messages_booking_created_idx").on(t.bookingId, t.createdAt)],
@@ -96,3 +99,48 @@ export const rateLimits = sqliteTable("rate_limits", {
   windowStart: integer("window_start").notNull(),
   count: integer("count").notNull(),
 });
+
+export const messageReports = sqliteTable(
+  "message_reports",
+  {
+    id: text("id").primaryKey(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id),
+    reporterId: text("reporter_id").notNull(),
+    reason: text("reason").notNull(),
+    details: text("details").notNull(),
+    status: text("status").notNull().default("open"),
+    resolution: text("resolution"),
+    moderatorId: text("moderator_id"),
+    resolutionNotes: text("resolution_notes"),
+    createdAt: text("created_at").notNull(),
+    resolvedAt: text("resolved_at"),
+  },
+  (t) => [
+    uniqueIndex("one_report_per_user_message").on(t.messageId, t.reporterId),
+    index("message_reports_status_idx").on(t.status, t.createdAt),
+  ],
+);
+
+export const rideAppeals = sqliteTable(
+  "ride_appeals",
+  {
+    id: text("id").primaryKey(),
+    rideId: text("ride_id")
+      .notNull()
+      .references(() => rides.id),
+    removalReportId: text("removal_report_id").notNull(),
+    driverId: text("driver_id").notNull(),
+    details: text("details").notNull(),
+    status: text("status").notNull().default("pending"),
+    decisionNotes: text("decision_notes"),
+    reviewerId: text("reviewer_id"),
+    createdAt: text("created_at").notNull(),
+    reviewedAt: text("reviewed_at"),
+  },
+  (t) => [
+    uniqueIndex("one_appeal_per_removal").on(t.rideId, t.removalReportId),
+    index("appeals_status_idx").on(t.status, t.createdAt),
+  ],
+);
