@@ -438,10 +438,7 @@ export default function Carpool() {
         !campusFilter || r.campus.toLowerCase() === campusFilter.toLowerCase(),
     )
     .filter(
-      (r) =>
-        r.status === "active" &&
-        Date.parse(r.departure) > Date.now() &&
-        r.driverId !== uid,
+      (r) => r.status === "active" && Date.parse(r.departure) > Date.now(),
     )
     .filter(
       (r) =>
@@ -771,8 +768,7 @@ export default function Carpool() {
               <Sparkles size={15} />
               {mode === "demo" ? (
                 <>
-                  You’re exploring demo rides. Try posting, requesting, and
-                  approving a seat.
+                  Demo mode · try posting and booking. Changes reset on reload.
                 </>
               ) : (
                 <>
@@ -994,8 +990,9 @@ export default function Carpool() {
                     {mode === "demo" && (
                       <>
                         <p>
-                          Demo searches fictional sample trips. Live searches
-                          rides posted by members.
+                          Demo searches sample trips and rides you post in this
+                          demo. Changes reset on reload. Live searches saved
+                          member listings.
                         </p>
                         <button
                           className="text-button"
@@ -1090,6 +1087,7 @@ export default function Carpool() {
                       <RideCard
                         key={r.id}
                         ride={r}
+                        isOwn={r.driverId === uid}
                         index={i}
                         booking={s.bookings.find(
                           (b) => b.rideId === r.id && b.riderId === uid,
@@ -1112,7 +1110,7 @@ export default function Carpool() {
                     <p>
                       {activeFilter
                         ? mode === "demo"
-                          ? "These are fictional sample trips. Clear filters to browse them, or search live rides above."
+                          ? "No rides in this demo match your filters. Clear filters or search live rides above. Demo posts reset on reload."
                           : "No posted rides match these filters. Try another location or date, or clear filters."
                         : "Post a ride and give someone a way home."}
                     </p>
@@ -1999,11 +1997,13 @@ export default function Carpool() {
 function RideCard({
   ride: r,
   index,
+  isOwn,
   booking,
   onClick,
 }: {
   ride: Ride;
   index: number;
+  isOwn: boolean;
   booking?: Booking;
   onClick: () => void;
 }) {
@@ -2031,6 +2031,11 @@ function RideCard({
         </div>
       </div>
       <div className="ride-tags">
+        {isOwn && (
+          <span className="requested-tag">
+            <CheckCircle2 size={13} /> Your ride
+          </span>
+        )}
         <span>
           <Users size={13} />
           {r.seats - r.accepted} {r.seats - r.accepted === 1 ? "seat" : "seats"}{" "}

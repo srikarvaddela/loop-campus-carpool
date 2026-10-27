@@ -70,10 +70,9 @@ export async function GET(req: Request) {
     const where = [
       "r.status='active'",
       "r.departure > ?",
-      "r.driver_id != ?",
       "r.seats-r.accepted >= ?",
     ];
-    const bindings: (string | number)[] = [now, user?.userId || "", q.seats];
+    const bindings: (string | number)[] = [now, q.seats];
     if (q.origin) {
       where.push("instr(lower(r.origin),lower(?)) > 0");
       bindings.push(q.origin);

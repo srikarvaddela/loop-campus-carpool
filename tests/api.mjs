@@ -854,11 +854,31 @@ eq(
   0,
   "date end exclusive",
 );
+const driverDiscovery = (
+  await search(searchDrivers[0], { origin: searchOrigin, limit: "24" })
+).body.rides;
+eq(driverDiscovery.length, 20, "discovery includes own and other listings");
+const ownSearchRides = driverDiscovery.filter(
+  (r) => r.driverId === searchDrivers[0],
+);
+eq(ownSearchRides.length, 10, "driver can discover all matching own listings");
 eq(
-  (await search(searchDrivers[0], { origin: searchOrigin, limit: "24" })).body
-    .rides.length,
-  10,
-  "discovery excludes own listings",
+  (
+    await api(searchDrivers[0], {
+      action: "request",
+      rideId: ownSearchRides[0].id,
+      expectedVersion: ownSearchRides[0].version,
+    })
+  ).status,
+  409,
+  "a discoverable own listing still rejects self-booking",
+);
+eq(
+  (
+    await search(stranger, { origin: searchOrigin, limit: "24" })
+  ).body.rides.some((r) => r.id === ownSearchRides[0].id),
+  true,
+  "the same posted listing is discoverable by another account",
 );
 eq(
   (await api(null)).body.rides.length,
