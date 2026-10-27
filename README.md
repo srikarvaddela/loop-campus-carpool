@@ -6,7 +6,7 @@ A campus ride-sharing application. Create a campus profile, find rides, request 
 
 ## Try it
 
-The app opens in **Demo** mode. Example rides and one incoming request let you explore every flow; demo changes stay in memory and reset on reload. Switch to **Live** for real records persisted in the database. The initial hosted site is owner-private, so other students cannot access it yet.
+The Sites deployment opens in **Demo** mode. Example rides and one incoming request let you explore every flow; demo changes stay in memory and reset on reload. Switch to **Live** for real records persisted in the database. The standalone Cloudflare target defaults to Live. The current Sites deployment is owner-private, so other students cannot access it yet.
 
 ## Stack
 
@@ -14,7 +14,7 @@ The app opens in **Demo** mode. Example rides and one incoming request let you e
 - Vinext (React/Next-compatible routing) on Cloudflare Workers
 - Cloudflare D1 (SQLite), with Drizzle schema and generated migrations
 - Zod input validation; lucide-react icons
-- Platform-managed ChatGPT sign-in, with per-operation authorization
+- Platform-managed ChatGPT sign-in on Sites; Better Auth and Google sign-in for a separate standalone Cloudflare deployment
 
 This initial hosted implementation uses D1 rather than PostgreSQL/Express. The booking model and SQL operations are deliberately small enough to port later. No university verification is implied by sign-in.
 
@@ -31,6 +31,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_woozy_lady_bullseye.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_daily_darkstar.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_lowly_justin_hammer.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_certain_lilandra.sql
 npm run dev -- --hostname 127.0.0.1
 ```
 
@@ -42,11 +43,22 @@ Open the printed local URL (usually http://127.0.0.1:5173). Apply the migration 
 npm run check
 npm run build
 npm run test:api
+npm run test:auth
 ```
 
 The test runner creates an isolated local database, applies every migration, starts the **built Worker**, runs the API suite using synthetic identities, and cleans up its own processes and test data. It refuses non-local targets. The 400 assertions cover identity/ownership, booking and edit races, version checks, private messages, single-message evidence privacy and redaction, removal appeals and stale decisions, complete cursor traversal with tied sort keys, scoped cursors, date boundaries, literal search terms, own-listing discovery without self-booking, concurrent quota claims, separate account/action allowances, message retries at the limit, and cancellations after limits are reached. Never expose the local test Worker directly: production relies on Sites to validate identity headers.
 
 GitHub Actions runs these same type, build, and integration checks on pushes to `main` and on pull requests. No hosted database or credentials are required for CI. These tests simulate separate accounts locally; a multi-account hosted pilot remains a separate validation step.
+
+The additional authentication suite uses signed local fixture sessions and an isolated D1 database. It checks Google authorization URL construction, PKCE/state creation, origin/return-path checks, signed/expired/revoked sessions, disabled providers, header spoofing, account isolation, and authentication quotas. It does not complete a real Google consent flow or prove provider configuration is live.
+
+## Google sign-in deployment
+
+See [standalone setup](docs/google-sign-in.md). The Google client JSON is imported into ignored local files using `scripts/configure-google.mjs`; credentials never belong in source or browser bundles. The standalone build uses its own Worker/D1 configuration and validated Better Auth sessions. It never treats Sites identity headers as a user session. Sites retains ChatGPT sign-in; missing or unknown `LOOP_AUTH_MODE` values fail closed.
+
+Use `npm run build:standalone` and `npm run start:standalone` for the standalone target. Production requires a Cloudflare account, an actual D1 binding, Google OAuth credentials, a high-entropy session secret, and the exact deployed HTTPS callback registered with Google. Apple sign-in is not enabled. A configured Google provider must still be tested with a real account before a pilot.
+
+Existing Sites records and moderator IDs remain associated with their Sites identities. They are not automatically transferred or matched to Google users by email. The standalone deployment needs a separate explicit moderator allowlist and an ownership-preserving data migration if real records are moved.
 
 ## Booking design
 
@@ -121,6 +133,10 @@ The driver may submit one appeal per removal decision for an upcoming removed ri
 - `app/api/message-reports/route.ts`: participant-authorized single-message reports
 - `app/api/profile/route.ts`, `app/api/reports/route.ts`, and `app/api/moderation/route.ts`: authenticated community operations
 - `lib/moderation.ts`: server-side moderator allowlist
+- `lib/auth-user.ts` and `lib/standalone-auth.ts`: deployment-specific identity and Google sessions
+- `app/auth-controls.tsx`, `app/signin/`, and `app/api/auth/`: sign-in UI and Better Auth routes
+- `db/auth-schema.ts`: standalone provider accounts and sessions
+- `scripts/standalone.mjs` and `scripts/configure-google.mjs`: separate deployment and private credential import
 - `lib/validation.ts`: input contracts
 - `lib/demo.ts`: fictional sample rides, separate from live records
 - `db/schema.ts` and `drizzle/`: schema and migrations

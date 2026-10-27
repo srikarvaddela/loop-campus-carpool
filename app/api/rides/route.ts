@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { z } from "zod";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { z } from "zod/v3";
+import { getAppUser } from "../../../lib/auth-user";
 import { rideRecord } from "../../../lib/ride-record";
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
@@ -40,7 +40,7 @@ export async function GET(req: Request) {
   const q = parsed.data;
   try {
     if (!env.DB) throw new Error("Database unavailable");
-    const user = await getChatGPTUser();
+    const user = await getAppUser();
     const scopeInput = JSON.stringify({
       ...q,
       cursor: undefined,

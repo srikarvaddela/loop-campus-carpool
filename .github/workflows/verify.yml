@@ -19,3 +19,4 @@ jobs:
       - run: node node_modules/typescript/bin/tsc --noEmit
       - run: npm run build
       - run: node scripts/test-local.mjs
+      - run: node scripts/test-auth.mjs

@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { getAppUser } from "../../../lib/auth-user";
 import { actionSchema } from "../../../lib/validation";
 import { isModerator } from "../../../lib/moderation";
 import { rateLimit } from "../../../lib/rate-limit";
 import { rideRecord } from "../../../lib/ride-record";
+import { authConfig } from "../../../lib/auth-config";
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -13,7 +14,7 @@ function database() {
 }
 export async function GET() {
   try {
-    const user = await getChatGPTUser();
+    const user = await getAppUser();
     const db = database();
     const profile = user
       ? await db
@@ -49,6 +50,7 @@ export async function GET() {
       }),
     );
     return reply({
+      auth: authConfig(),
       rides,
       bookings,
       user: user
@@ -78,7 +80,7 @@ export async function POST(req: Request) {
   const origin = req.headers.get("origin");
   if (origin && origin !== new URL(req.url).origin)
     return reply({ error: "Request origin is not allowed." }, 403);
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return reply({ error: "Sign in to post or request a ride." }, 401);
   let body: unknown;
   try {

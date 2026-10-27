@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { z } from "zod";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { z } from "zod/v3";
+import { getAppUser } from "../../../lib/auth-user";
 import { isModerator } from "../../../lib/moderation";
 import { rateLimit } from "../../../lib/rate-limit";
 import { removalKeySql } from "../../../lib/removal-key";
@@ -29,7 +29,7 @@ const schema = z.discriminatedUnion("action", [
   }),
 ]);
 export async function GET(req: Request) {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return reply({ error: "Sign in to view appeals." }, 401);
   const review = new URL(req.url).searchParams.get("review") === "true";
   if (review && !isModerator(user.userId))
@@ -70,7 +70,7 @@ export async function POST(req: Request) {
   const origin = req.headers.get("origin");
   if (origin && origin !== new URL(req.url).origin)
     return reply({ error: "Request origin is not allowed." }, 403);
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return reply({ error: "Sign in to manage an appeal." }, 401);
   let body: unknown;
   try {

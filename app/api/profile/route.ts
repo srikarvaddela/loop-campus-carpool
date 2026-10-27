@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { z } from "zod";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { z } from "zod/v3";
+import { getAppUser } from "../../../lib/auth-user";
 import { isModerator } from "../../../lib/moderation";
 import { rateLimit } from "../../../lib/rate-limit";
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ const schema = z.object({
   campus: z.string().trim().min(3).max(100),
 });
 export async function GET() {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return reply({ error: "Sign in to view your profile." }, 401);
   try {
     if (!env.DB) throw new Error("Database unavailable");
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
   const origin = req.headers.get("origin");
   if (origin && origin !== new URL(req.url).origin)
     return reply({ error: "Request origin is not allowed." }, 403);
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return reply({ error: "Sign in to save your profile." }, 401);
   let body: unknown;
   try {

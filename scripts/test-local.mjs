@@ -1,6 +1,12 @@
 // Start an isolated local built Worker, apply all migrations, and exercise the real API.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 const root = process.cwd();
 const runtime = path.resolve(root, ".sites-runtime");
@@ -8,7 +14,34 @@ mkdirSync(runtime, { recursive: true });
 const state = mkdtempSync(path.join(runtime, "integration-"));
 const wrangler = path.join(root, "node_modules/wrangler/bin/wrangler.js");
 const common = ["--config", "dist/server/wrangler.json", "--persist-to", state];
-const env = { ...process.env, WRANGLER_SEND_METRICS: "false" };
+const env = {
+  ...process.env,
+  WRANGLER_SEND_METRICS: "false",
+  WRANGLER_REGISTRY_PATH: path.join(state, "dev-registry"),
+  MINIFLARE_REGISTRY_PATH: path.join(state, "registry"),
+};
+const authTest = process.argv.includes("--auth");
+const authMode = process.argv.includes("--disabled")
+  ? "disabled"
+  : "standalone";
+const authReady =
+  authTest &&
+  !process.argv.includes("--unconfigured") &&
+  authMode === "standalone";
+const authVars = authTest
+  ? [
+      "--var",
+      `LOOP_AUTH_MODE:${authMode}`,
+      "--var",
+      "BETTER_AUTH_URL:http://127.0.0.1:8789",
+      "--var",
+      `BETTER_AUTH_SECRET:${authReady ? "loop-integration-test-secret-not-a-real-credential-00000000" : ""}`,
+      "--var",
+      "GOOGLE_CLIENT_ID:loop-integration.apps.googleusercontent.com",
+      "--var",
+      `GOOGLE_CLIENT_SECRET:${authReady ? "loop-test-only-not-real" : ""}`,
+    ]
+  : ["--var", "LOOP_AUTH_MODE:sites"];
 let server;
 let logs = "";
 try {
@@ -33,6 +66,38 @@ try {
     );
     if (migrated.status !== 0) throw new Error(`Migration failed: ${file}`);
   }
+  if (authTest) {
+    const now = Date.now();
+    const rows = [
+      ["oauth-driver", "loop-driver-session", now + 86400000],
+      ["oauth-rider", "loop-rider-session", now + 86400000],
+      ["oauth-expired", "loop-expired-session", now - 1000],
+    ]
+      .map(
+        ([id, token, expires]) =>
+          `INSERT INTO auth_users(id,name,email,email_verified,created_at,updated_at) VALUES('${id}','Test User','${id}@loop.test',1,${now},${now}); INSERT INTO auth_sessions(id,token,user_id,expires_at,created_at,updated_at) VALUES('${id}','${token}','${id}',${expires},${now},${now});`,
+      )
+      .join("\n");
+    const seed = path.join(state, "auth-fixtures.sql");
+    writeFileSync(seed, rows);
+    const seeded = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "./scripts/sites-env.mjs",
+        wrangler,
+        "d1",
+        "execute",
+        "DB",
+        "--local",
+        ...common,
+        "--file",
+        seed,
+      ],
+      { stdio: "inherit", env, windowsHide: true },
+    );
+    if (seeded.status !== 0) throw new Error("Auth fixture migration failed.");
+  }
   server = spawn(
     process.execPath,
     [
@@ -48,6 +113,7 @@ try {
       "8789",
       "--var",
       "LOOP_MODERATOR_IDS:loop-test-moderator",
+      ...authVars,
       "--inspector-port",
       "0",
     ],
@@ -83,11 +149,20 @@ try {
   }
   if (!ready) throw new Error("Local Worker did not become ready.");
   const tested = await new Promise((resolve) => {
-    const child = spawn(process.execPath, ["tests/api.mjs"], {
-      stdio: "inherit",
-      env: { ...env, LOOP_TEST_URL: "http://127.0.0.1:8789" },
-      windowsHide: true,
-    });
+    const child = spawn(
+      process.execPath,
+      [authTest ? "tests/auth.mjs" : "tests/api.mjs"],
+      {
+        stdio: "inherit",
+        env: {
+          ...env,
+          LOOP_TEST_URL: "http://127.0.0.1:8789",
+          LOOP_TEST_AUTH_MODE: authMode,
+          LOOP_TEST_AUTH_READY: String(authReady),
+        },
+        windowsHide: true,
+      },
+    );
     child.on("error", () => resolve(1));
     child.on("exit", (code) => resolve(code ?? 1));
   });

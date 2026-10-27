@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { z } from "zod";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { z } from "zod/v3";
+import { getAppUser } from "../../../lib/auth-user";
 import { isModerator } from "../../../lib/moderation";
 export const dynamic = "force-dynamic";
 const reply = (data: unknown, status = 200) =>
@@ -25,7 +25,7 @@ export async function POST(req: Request) {
   const origin = req.headers.get("origin");
   if (origin && origin !== new URL(req.url).origin)
     return reply({ error: "Request origin is not allowed." }, 403);
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return reply({ error: "Sign in to review reports." }, 401);
   if (!isModerator(user.userId))
     return reply({ error: "Moderator access is required." }, 403);

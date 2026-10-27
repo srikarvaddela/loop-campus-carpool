@@ -49,6 +49,8 @@ import {
 } from "../lib/demo";
 import { actionSchema } from "../lib/validation";
 import { useRideSearch } from "../lib/use-ride-search";
+import { SignInOptions, SignOutControl } from "./auth-controls";
+import type { AuthConfig } from "../lib/types";
 
 type View = "find" | "trips" | "requests";
 type Modal =
@@ -166,10 +168,14 @@ function RouteArt() {
   );
 }
 
-export default function Carpool() {
+export default function Carpool({
+  initialMode = "demo",
+}: {
+  initialMode?: "demo" | "live";
+}) {
   const [live, setLive] = useState<Snapshot>(empty);
   const [demo, setDemo] = useState<Snapshot>(() => demoSnapshot());
-  const [mode, setMode] = useState<"demo" | "live">("demo");
+  const [mode, setMode] = useState<"demo" | "live">(initialMode);
   const [view, setView] = useState<View>("find");
   const [modal, setModal] = useState<Modal>(null);
   const [menu, setMenu] = useState(false);
@@ -760,6 +766,7 @@ export default function Carpool() {
                 ? "Try Loop"
                 : s.user?.displayName.split("@")[0] || "Guest"}
             </span>
+            {mode === "live" && s.user && <SignOutControl config={live.auth} />}
           </div>
         </header>
         <div className="main-content">
@@ -785,7 +792,11 @@ export default function Carpool() {
               </button>
             ) : !s.user ? (
               <a
-                href="/signin-with-chatgpt?return_to=%2F%3Fmode%3Dlive"
+                href={
+                  live.auth?.mode === "sites"
+                    ? "/signin-with-chatgpt?return_to=%2F%3Fmode%3Dlive"
+                    : "/signin"
+                }
                 target="_top"
               >
                 Sign in <LogIn size={14} />
@@ -1497,7 +1508,7 @@ export default function Carpool() {
           )}
           {modal.type === "profile" &&
             (mode === "live" && !uid ? (
-              <SignInPrompt />
+              <SignInPrompt auth={live.auth} />
             ) : (
               <ProfileForm
                 profile={s.profile || null}
@@ -1508,7 +1519,7 @@ export default function Carpool() {
           {(modal.type === "report" || modal.type === "message-report") &&
             reportRide &&
             (mode === "live" && !uid ? (
-              <SignInPrompt />
+              <SignInPrompt auth={live.auth} />
             ) : (
               <ReportForm
                 destination={reportRide.destination}
@@ -1573,7 +1584,7 @@ export default function Carpool() {
             ))}
           {modal.type === "reports" &&
             (mode === "live" && !uid ? (
-              <SignInPrompt />
+              <SignInPrompt auth={live.auth} />
             ) : (
               <ReviewCenter
                 isModerator={!!s.isModerator}
@@ -1682,7 +1693,7 @@ export default function Carpool() {
           )}
           {modal.type === "post" &&
             (mode === "live" && !uid ? (
-              <SignInPrompt />
+              <SignInPrompt auth={live.auth} />
             ) : (
               <PostForm
                 busy={busy}
@@ -1793,7 +1804,7 @@ export default function Carpool() {
                   You’re driving this ride. Review seat requests in Requests.
                 </div>
               ) : mode === "live" && !uid ? (
-                <SignInPrompt />
+                <SignInPrompt auth={live.auth} />
               ) : myBooking &&
                 ["pending", "accepted"].includes(myBooking.status) ? (
                 <div className={"booking-confirmation " + myBooking.status}>
@@ -1968,10 +1979,11 @@ export default function Carpool() {
               <div className="help-disclaimer">
                 <ShieldCheck size={20} />
                 <p>
-                  This is an early version. Accounts use ChatGPT sign-in;
-                  student identity, driving credentials, and insurance are not
-                  verified. Trip messaging opens after seat confirmation.
-                  Payments are arranged outside Loop.
+                  This is an early version. Accounts use{" "}
+                  {live.auth?.mode === "standalone" ? "Google" : "ChatGPT"}{" "}
+                  sign-in; student identity, driving credentials, and insurance
+                  are not verified. Trip messaging opens after seat
+                  confirmation. Payments are arranged outside Loop.
                 </p>
               </div>
               <button
@@ -2099,18 +2111,11 @@ function Empty({
     </div>
   );
 }
-function SignInPrompt() {
+function SignInPrompt({ auth }: { auth?: AuthConfig }) {
   return (
     <div className="sign-in-prompt">
       <p>Sign in to save rides and seat requests to your account.</p>
-      <a
-        className="primary full"
-        href="/signin-with-chatgpt?return_to=%2F%3Fmode%3Dlive"
-        target="_top"
-      >
-        <LogIn size={17} />
-        Sign in with ChatGPT
-      </a>
+      <SignInOptions config={auth} />
     </div>
   );
 }

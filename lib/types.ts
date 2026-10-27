@@ -25,6 +25,10 @@ export type Booking = {
   createdAt: string;
 };
 export type User = { userId: string; displayName: string };
+export type AuthConfig = {
+  mode: "sites" | "standalone" | "disabled";
+  providers: "google"[];
+};
 export type Message = {
   id: string;
   bookingId: string;
@@ -36,6 +40,7 @@ export type Message = {
 };
 export type Conversation = { messages: Message[]; canSend: boolean };
 export type Snapshot = {
+  auth?: AuthConfig;
   rides: Ride[];
   bookings: Booking[];
   user: User | null;
