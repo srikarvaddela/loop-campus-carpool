@@ -50,6 +50,7 @@ import {
 import { actionSchema } from "../lib/validation";
 import { useRideSearch } from "../lib/use-ride-search";
 import { SignInOptions, SignOutControl } from "./auth-controls";
+import LocationInput from "./location-input";
 import type { AuthConfig } from "../lib/types";
 
 type View = "find" | "trips" | "requests";
@@ -876,11 +877,12 @@ export default function Carpool({
                     <span className="origin-dot" />
                     LEAVING FROM
                   </span>
-                  <input
+                  <LocationInput
                     value={origin}
-                    onChange={(e) => setOrigin(e.target.value)}
-                    placeholder="Any campus pickup"
-                    aria-label="Leaving from"
+                    onChange={setOrigin}
+                    preference="pickup"
+                    placeholder="Building or pickup location"
+                    label="Leaving from"
                   />
                 </label>
                 <button
@@ -899,11 +901,12 @@ export default function Carpool({
                     <MapPin size={14} />
                     GOING TO
                   </span>
-                  <input
+                  <LocationInput
                     value={destination}
-                    onChange={(e) => setDestination(e.target.value)}
-                    placeholder="Where are you headed?"
-                    aria-label="Going to"
+                    onChange={setDestination}
+                    preference="destination"
+                    placeholder="Airport, place, or destination"
+                    label="Going to"
                   />
                 </label>
                 <label className="search-field date-field">
@@ -2183,6 +2186,8 @@ function PostForm({
   locked?: boolean;
 }) {
   const [formError, setFormError] = useState("");
+  const [pickup, setPickup] = useState(ride?.origin || "");
+  const [dropoff, setDropoff] = useState(ride?.destination || "");
   async function handle(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setFormError("");
@@ -2219,26 +2224,28 @@ function PostForm({
       </p>
       <label>
         Pickup location
-        <input
+        <LocationInput
           name="origin"
-          defaultValue={ride?.origin}
+          value={pickup}
+          onChange={setPickup}
+          preference="pickup"
+          label="Pickup location"
           readOnly={locked}
-          placeholder="e.g. Campus · Student Union"
+          placeholder="e.g. ECSW or Student Union"
           required
-          minLength={2}
-          maxLength={100}
         />
       </label>
       <label>
         Destination
-        <input
+        <LocationInput
           name="destination"
-          defaultValue={ride?.destination}
+          value={dropoff}
+          onChange={setDropoff}
+          preference="destination"
+          label="Destination"
           readOnly={locked}
-          placeholder="e.g. Chicago · O’Hare Airport"
+          placeholder="e.g. DFW Airport or Downtown Dallas"
           required
-          minLength={2}
-          maxLength={100}
         />
       </label>
       <div className="form-grid">
