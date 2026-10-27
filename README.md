@@ -66,6 +66,8 @@ The UI requests 12 rides at a time and offers **Load more rides**. API page size
 
 Changing filters cancels stale searches and resets pagination. The browser deduplicates appended pages. Search refreshes after mutations or the explicit Refresh button; background trip polling does not reset a reader's loaded search pages. A failed search shows a retry action. Campus choices come from up to 100 distinct campuses with active future listings. Demo search remains local and separate from the live API.
 
+Submitting Find a ride moves keyboard focus and the viewport to Search results, with a visible route/date/seat summary, loading feedback, and an explicit match count or no-match message. Repeating the same live search refreshes its results. Demo results explain that they are fictional trips and offer Search live rides, preserving the submitted route, date, and seat requirement while clearing demo campus/category filters. Searching does not generate rides; live results require member-posted listings matching the entered location text.
+
 ## Account action limits
 
 The server uses one durable D1 counter per authenticated account and action, with a conditional SQL UPSERT to claim allowance atomically across concurrent requests. Fixed windows align to UTC minute/hour boundaries; this is not a rolling-window limiter.

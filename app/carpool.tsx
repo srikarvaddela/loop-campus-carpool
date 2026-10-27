@@ -181,6 +181,18 @@ export default function Carpool() {
   const [destination, setDestination] = useState("");
   const [date, setDate] = useState("");
   const [seats, setSeats] = useState("1");
+  const [searchRevision, setSearchRevision] = useState(0);
+  const resultsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!searchRevision) return;
+    resultsRef.current?.focus({ preventScroll: true });
+    resultsRef.current?.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+      block: "start",
+    });
+  }, [searchRevision]);
   const [filters, setFilters] = useState({
     origin: "",
     destination: "",
@@ -270,15 +282,20 @@ export default function Carpool() {
     }, 30000);
     return () => clearInterval(t);
   }, []);
-  const switchMode = (next: "demo" | "live") => {
+  const switchMode = (next: "demo" | "live", preserveSearch = false) => {
     setMode(next);
     setModal(null);
     setView("find");
     setMenu(false);
-    setFilters({ origin: "", destination: "", date: "", seats: 1 });
-    setOrigin("");
-    setDestination("");
-    setDate("");
+    if (preserveSearch) setSearchRevision((v) => v + 1);
+    else {
+      setFilters({ origin: "", destination: "", date: "", seats: 1 });
+      setOrigin("");
+      setDestination("");
+      setDate("");
+      setSeats("1");
+      setSearchRevision(0);
+    }
     setCategory("All rides");
     setCampusFilter("");
     setError("");
@@ -843,6 +860,8 @@ export default function Carpool() {
                     date,
                     seats: Number(seats),
                   });
+                  setSearchRevision((v) => v + 1);
+                  if (mode === "live") discovery.reload();
                 }}
               >
                 <label className="search-field">
@@ -910,19 +929,33 @@ export default function Carpool() {
                     ))}
                   </select>
                 </label>
-                <button className="primary search-submit">
-                  <Search size={18} />
-                  Find a ride
+                <button type="submit" className="primary search-submit">
+                  {mode === "live" && discovery.loading ? (
+                    <LoaderCircle size={18} className="spin" />
+                  ) : (
+                    <Search size={18} />
+                  )}
+                  {mode === "live" && discovery.loading
+                    ? "Searching…"
+                    : "Find a ride"}
                 </button>
               </form>
-              <section className="rides-section">
+              <section
+                className="rides-section"
+                ref={resultsRef}
+                tabIndex={-1}
+                aria-labelledby="ride-results-heading"
+              >
                 <div className="section-heading">
                   <div>
                     <div className="section-kicker">
                       A SEAT WITH YOUR NAME ON IT
                     </div>
-                    <h2>
-                      Catch your next ride<span>.</span>
+                    <h2 id="ride-results-heading">
+                      {searchRevision
+                        ? "Search results"
+                        : "Catch your next ride"}
+                      <span>.</span>
                     </h2>
                     <p>
                       {mode === "demo"
@@ -935,6 +968,45 @@ export default function Carpool() {
                     Post a ride
                   </button>
                 </div>
+                {searchRevision > 0 && (
+                  <div
+                    className="search-feedback"
+                    role="status"
+                    aria-atomic="true"
+                  >
+                    <strong>
+                      {mode === "live" && discovery.loading
+                        ? "Searching rides…"
+                        : mode === "live" && discovery.error
+                          ? "Search couldn't finish. Please retry below."
+                          : matched.length
+                            ? `${matched.length}${mode === "demo" ? " demo" : ""} ${matched.length === 1 ? "ride" : "rides"} ${discovery.hasMore && mode === "live" ? "loaded · more available" : "found"}`
+                            : `No ${mode === "demo" ? "demo " : ""}rides match this search.`}
+                    </strong>
+                    <span>
+                      {filters.origin || "Any pickup"} →{" "}
+                      {filters.destination || "Any destination"}
+                      {filters.date
+                        ? ` · ${dateLabel(`${filters.date}T12:00:00`)}`
+                        : " · Any date"}
+                      {` · ${filters.seats}+ ${filters.seats === 1 ? "seat" : "seats"}`}
+                    </span>
+                    {mode === "demo" && (
+                      <>
+                        <p>
+                          Demo searches fictional sample trips. Live searches
+                          rides posted by members.
+                        </p>
+                        <button
+                          className="text-button"
+                          onClick={() => switchMode("live", true)}
+                        >
+                          Search live rides <ArrowRight size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="filterbar">
                   <div className="pills">
                     {["All rides", "Airport runs", "Heading home"].map((c) => (
@@ -980,7 +1052,10 @@ export default function Carpool() {
                   </select>
                   <span>Self-reported membership</span>
                 </div>
-                <div className="result-line">
+                <div
+                  className="result-line"
+                  aria-live={searchRevision ? "off" : "polite"}
+                >
                   <span>
                     {matched.length} {mode === "demo" ? "demo " : ""}
                     {matched.length === 1 ? "ride" : "rides"}{" "}
@@ -1036,7 +1111,9 @@ export default function Carpool() {
                     </h3>
                     <p>
                       {activeFilter
-                        ? "Try another destination or departure date."
+                        ? mode === "demo"
+                          ? "These are fictional sample trips. Clear filters to browse them, or search live rides above."
+                          : "No posted rides match these filters. Try another location or date, or clear filters."
                         : "Post a ride and give someone a way home."}
                     </p>
                     <button
