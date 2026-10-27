@@ -5,7 +5,7 @@ export default function SignIn() {
   return (
     <main className="login-page">
       <section className="login-card">
-        <a href="/?mode=live" className="login-home">
+        <a href="/" className="login-home">
           ← Back to Loop
         </a>
         <div className="section-kicker">YOUR CAMPUS. YOUR PEOPLE.</div>

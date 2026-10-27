@@ -2,11 +2,11 @@
 
 A campus ride-sharing application. Create a campus profile, find rides, request a seat, coordinate pickup in private conversations, and report listing or message concerns for moderator review. Drivers can safely edit upcoming trips and appeal listing removals.
 
-[Source on GitHub](https://github.com/srikarvaddela/loop-campus-carpool) · [Hosted app](https://campus-carpool-luffy-1025.shoyo722.chatgpt.site)
+[Source on GitHub](https://github.com/srikarvaddela/loop-campus-carpool) · [Hosted app](https://loop-campus-carpool.srikar-loop.workers.dev/)
 
 ## Try it
 
-The Sites deployment opens in **Demo** mode. Example rides and one incoming request let you explore every flow; demo changes stay in memory and reset on reload. Switch to **Live** for real records persisted in the database. The standalone Cloudflare target defaults to Live. The current Sites deployment is owner-private, so other students cannot access it yet.
+Loop shows real rides from its database. Sign in with Google, create your campus profile, and post a ride or request an available seat. Search is available without signing in. Demo mode and fictional sample rides have been removed. The separate Sites deployment remains owner-private and uses ChatGPT sign-in.
 
 ## Stack
 
@@ -72,13 +72,13 @@ The API derives the acting user from trusted server identity, never from client 
 
 ## Ride discovery and pagination
 
-`GET /api/rides` queries active future rides on the server, excluding rides without enough available seats. Matching own listings appear with a **Your ride** label; their details show driver controls, and the server rejects self-booking. This also applies to posts made in the current demo. Search supports literal origin/destination substring filters, campus, a UTC date interval, minimum seats, airport/home categories, and earliest-departure/lowest-price sorting. Location spelling must match part of the listing text; there is no typo correction or place-alias lookup. The browser converts the selected local calendar day into UTC start/end midnights, including daylight-saving transitions.
+`GET /api/rides` queries active future rides on the server, excluding rides without enough available seats. Matching own listings appear with a **Your ride** label; their details show driver controls, and the server rejects self-booking. Search supports literal origin/destination substring filters, campus, a UTC date interval, minimum seats, airport/home categories, and earliest-departure/lowest-price sorting. Location spelling must match part of the listing text; the location dropdown recognizes curated UTD/Dallas names and aliases and fills consistent text, while free-text ride matching remains literal. See [location suggestions](docs/locations.md). The browser converts the selected local calendar day into UTC start/end midnights, including daylight-saving transitions.
 
 The UI requests 12 rides at a time and offers **Load more rides**. API page sizes are bounded to 1–24. Keyset cursors use departure and ID, with price added for price sorting. All sort ties have deterministic ID ordering. Cursors are scoped to the exact filters, page size, and signed-in visitor; changing those requires a fresh search. They are pagination tokens, not authentication credentials. New rides inserted before an existing cursor appear after a refresh. As availability changes, a ride can disappear between pages.
 
-Changing filters cancels stale searches and resets pagination. The browser deduplicates appended pages. Search refreshes after mutations or the explicit Refresh button; background trip polling does not reset a reader's loaded search pages. A failed search shows a retry action. Campus choices come from up to 100 distinct campuses with active future listings. Demo search remains local and separate from the live API.
+Changing filters cancels stale searches and resets pagination. The browser deduplicates appended pages. Search refreshes after mutations or the explicit Refresh button; background trip polling does not reset a reader's loaded search pages. A failed search shows a retry action. Campus choices come from up to 100 distinct campuses with active future listings.
 
-Submitting Find a ride moves keyboard focus and the viewport to Search results, with a visible route/date/seat summary, loading feedback, and an explicit match count or no-match message. Repeating the same live search refreshes its results. Demo results explain that they are fictional trips and offer Search live rides, preserving the submitted route, date, and seat requirement while clearing demo campus/category filters. Searching does not generate rides; live results require member-posted listings matching the entered location text.
+Submitting Find a ride moves keyboard focus and the viewport to Search results, with a visible route/date/seat summary, loading feedback, and an explicit match count or no-match message. Repeating the same live search refreshes its results. Searching does not generate rides; live results require member-posted listings matching the entered location text.
 
 ## Account action limits
 
@@ -122,7 +122,7 @@ The driver may submit one appeal per removal decision for an upcoming removed ri
 
 ## Source guide
 
-- `app/carpool.tsx`: search, posting, ride details, driver requests, trip management, and labeled demo mode
+- `app/carpool.tsx`: search, posting, ride details, driver requests, trip management, and account sign-in
 - `app/globals.css`: responsive interface
 - `app/api/loop/route.ts`: real authenticated reads and writes
 - `app/api/rides/route.ts` and `lib/use-ride-search.ts`: server-side discovery, scoped keyset pagination, and search request lifecycle
@@ -138,7 +138,6 @@ The driver may submit one appeal per removal decision for an upcoming removed ri
 - `db/auth-schema.ts`: standalone provider accounts and sessions
 - `scripts/standalone.mjs` and `scripts/configure-google.mjs`: separate deployment and private credential import
 - `lib/validation.ts`: input contracts
-- `lib/demo.ts`: fictional sample rides, separate from live records
 - `db/schema.ts` and `drizzle/`: schema and migrations
 - `tests/api.mjs`: local integration checks
 - `scripts/test-local.mjs`: isolated migration/server/test lifecycle
@@ -151,4 +150,4 @@ The driver may submit one appeal per removal decision for an upcoming removed ri
 3. Add automated driver/rider browser tests and hosted multi-account validation.
 4. Invite a small pilot group after explicitly configuring site access.
 
-No payments, ratings, real student verification, maps, or notifications are implemented. This is a development MVP, not a launched transportation service. All sample names and trips are fictional; they are never written into the live database. The GitHub source is public; the hosted app remains owner-private until its audience is explicitly changed.
+No payments, ratings, real student verification, maps, or notifications are implemented. This is an early MVP. The Google sign-in deployment and GitHub source are public; the separate Sites deployment remains owner-private. Automated tests use isolated local databases and synthetic identities.

@@ -12,11 +12,9 @@ import type { Profile, Report, Message } from "../lib/types";
 
 export function ProfileForm({
   profile,
-  demo,
   onSaved,
 }: {
   profile: Profile | null;
-  demo: boolean;
   onSaved: (p: Profile) => void | Promise<void>;
 }) {
   const [error, setError] = useState("");
@@ -31,16 +29,13 @@ export function ProfileForm({
       campus: String(form.get("campus")).trim(),
     };
     try {
-      if (!demo) {
-        const res = await fetch("/api/profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(p),
-        });
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok)
-          throw new Error(data.error || "Couldn't save your profile.");
-      }
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(p),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Couldn't save your profile.");
       await onSaved(p);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save your profile.");
@@ -102,15 +97,11 @@ export function ProfileForm({
 
 export function ReportForm({
   destination,
-  demo,
-  onSubmit,
   onSaved,
   rideId,
   targetMessage,
 }: {
   destination: string;
-  demo: boolean;
-  onSubmit?: (reason: string, details: string) => void;
   onSaved: () => void;
   rideId: string;
   targetMessage?: Message;
@@ -128,25 +119,21 @@ export function ReportForm({
         setBusy(true);
         setError("");
         try {
-          if (demo) {
-            onSubmit?.(reason, details);
-          } else {
-            const res = await fetch(
-              targetMessage ? "/api/message-reports" : "/api/reports",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(
-                  targetMessage
-                    ? { messageId: targetMessage.id, reason, details }
-                    : { rideId, reason, details },
-                ),
-              },
-            );
-            const data = (await res.json()) as { error?: string };
-            if (!res.ok)
-              throw new Error(data.error || "Couldn't submit your report.");
-          }
+          const res = await fetch(
+            targetMessage ? "/api/message-reports" : "/api/reports",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                targetMessage
+                  ? { messageId: targetMessage.id, reason, details }
+                  : { rideId, reason, details },
+              ),
+            },
+          );
+          const data = (await res.json()) as { error?: string };
+          if (!res.ok)
+            throw new Error(data.error || "Couldn't submit your report.");
           onSaved();
         } catch (e) {
           setError(
@@ -240,22 +227,16 @@ function ReportFields({
   );
 }
 
-export type DemoReports = {
-  reports: (Report & { isMine?: boolean })[];
-  resolve: (id: string, resolution: "hide" | "dismiss", notes: string) => void;
-};
 export function ReportsPanel({
   isModerator,
-  demo,
   onChanged,
 }: {
   isModerator: boolean;
-  demo?: DemoReports;
   onChanged: () => void | Promise<void>;
 }) {
   const [review, setReview] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
-  const [loading, setLoading] = useState(!demo);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   async function load() {
@@ -267,7 +248,6 @@ export function ReportsPanel({
     setReports(data.reports);
   }
   useEffect(() => {
-    if (demo) return;
     let active = true;
     setLoading(true);
     setError("");
@@ -289,12 +269,8 @@ export function ReportsPanel({
     return () => {
       active = false;
     };
-  }, [review, !!demo]);
-  const shown = demo
-    ? review
-      ? demo.reports
-      : demo.reports.filter((r) => r.isMine)
-    : reports;
+  }, [review]);
+  const shown = reports;
   async function resolve(
     e: FormEvent<HTMLFormElement>,
     id: string,
@@ -307,22 +283,19 @@ export function ReportsPanel({
     setBusy(id);
     setError("");
     try {
-      if (demo) demo.resolve(id, resolution, notes);
-      else {
-        const res = await fetch("/api/moderation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            reportId: id,
-            resolution,
-            notes,
-            kind: kind || "ride",
-          }),
-        });
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok) throw new Error(data.error || "Couldn't resolve report.");
-        await load();
-      }
+      const res = await fetch("/api/moderation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reportId: id,
+          resolution,
+          notes,
+          kind: kind || "ride",
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Couldn't resolve report.");
+      await load();
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't resolve report.");
@@ -347,7 +320,7 @@ export function ReportsPanel({
             Moderator queue
           </button>
         )}
-        {!demo && (
+        {
           <button
             className="icon-button"
             aria-label="Refresh reports"
@@ -355,7 +328,7 @@ export function ReportsPanel({
           >
             <RefreshCw size={15} />
           </button>
-        )}
+        }
       </div>
       <p className="reports-intro">
         {review

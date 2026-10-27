@@ -16,11 +16,6 @@ type Props = {
   title: string;
   partner: string;
   onReport?: (message: Message) => void;
-  demo?: {
-    messages: Message[];
-    canSend: boolean;
-    send: (message: Message) => void;
-  };
 };
 
 export default function TripChat({
@@ -28,21 +23,20 @@ export default function TripChat({
   userId,
   title,
   partner,
-  demo,
   onReport,
 }: Props) {
   const [conversation, setConversation] = useState<Conversation>({
     messages: [],
     canSend: false,
   });
-  const [loading, setLoading] = useState(!demo);
+  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [sendError, setSendError] = useState("");
   const pending = useRef<{ body: string; id: string } | null>(null);
   const latest = useRef<HTMLDivElement>(null);
-  const shown = demo ?? conversation;
+  const shown = conversation;
 
   async function load() {
     const res = await fetch(
@@ -54,7 +48,6 @@ export default function TripChat({
     setConversation(data);
   }
   useEffect(() => {
-    if (demo) return;
     let active = true;
     const refresh = async () => {
       try {
@@ -82,7 +75,7 @@ export default function TripChat({
       active = false;
       clearInterval(interval);
     };
-  }, [bookingId, !!demo]);
+  }, [bookingId]);
   const lastId = shown.messages.at(-1)?.id;
   useEffect(() => {
     latest.current?.scrollIntoView({ block: "nearest" });
@@ -99,26 +92,14 @@ export default function TripChat({
       pending.current = { body, id: crypto.randomUUID() };
     const clientId = pending.current!.id;
     try {
-      if (demo) {
-        demo.send({
-          id: clientId,
-          bookingId,
-          senderId: userId,
-          senderName: "You",
-          body,
-          createdAt: new Date().toISOString(),
-        });
-      } else {
-        const res = await fetch("/api/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bookingId, clientId, body }),
-        });
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok)
-          throw new Error(data.error || "Couldn't send this message.");
-        await load();
-      }
+      const res = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId, clientId, body }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Couldn't send this message.");
+      await load();
       setDraft("");
       pending.current = null;
     } catch (e) {
@@ -151,7 +132,7 @@ export default function TripChat({
       {(sendError || error) && (
         <div className="chat-error" role="alert">
           <span>{sendError || error}</span>
-          {!demo && !sendError && (
+          {!sendError && (
             <button
               type="button"
               className="icon-button"

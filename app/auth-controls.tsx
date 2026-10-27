@@ -13,7 +13,7 @@ export function SignInOptions({ config }: { config?: AuthConfig }) {
       const { createAuthClient } = await import("better-auth/client");
       const result = await createAuthClient({
         baseURL: window.location.origin,
-      }).signIn.social({ provider: "google", callbackURL: "/?mode=live" });
+      }).signIn.social({ provider: "google", callbackURL: "/" });
       if (result.error)
         throw new Error("Google sign-in could not start. Please try again.");
     } catch (e) {
@@ -26,7 +26,7 @@ export function SignInOptions({ config }: { config?: AuthConfig }) {
       {config?.mode === "sites" ? (
         <a
           className="primary full"
-          href="/signin-with-chatgpt?return_to=%2F%3Fmode%3Dlive"
+          href="/signin-with-chatgpt?return_to=%2F"
           target="_top"
         >
           <LogIn size={17} />
@@ -66,7 +66,7 @@ export function SignOutControl({ config }: { config?: AuthConfig }) {
     return (
       <a
         className="text-button"
-        href="/signout-with-chatgpt?return_to=%2F%3Fmode%3Dlive"
+        href="/signout-with-chatgpt?return_to=%2F"
         target="_top"
       >
         Sign out
@@ -81,7 +81,7 @@ export function SignOutControl({ config }: { config?: AuthConfig }) {
         baseURL: window.location.origin,
       }).signOut();
       if (result.error) throw new Error("Please try signing out again.");
-      window.location.assign("/?mode=live");
+      window.location.assign("/");
     } catch {
       setError("Sign-out failed. Please retry.");
       setBusy(false);

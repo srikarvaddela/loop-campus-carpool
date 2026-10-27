@@ -30,23 +30,11 @@ import {
   Flag,
   GraduationCap,
 } from "lucide-react";
-import type {
-  Booking,
-  Ride,
-  Snapshot,
-  Message,
-  Profile,
-  Report,
-  Appeal,
-} from "../lib/types";
+import type { Booking, Ride, Snapshot, Message } from "../lib/types";
 import TripChat from "./trip-chat";
 import { ProfileForm, ReportForm } from "./community-panels";
 import { AppealForm, ReviewCenter } from "./appeal-panels";
-import {
-  demoSnapshot,
-  demoConversations,
-  demoSafetyReports,
-} from "../lib/demo";
+
 import { actionSchema } from "../lib/validation";
 import { useRideSearch } from "../lib/use-ride-search";
 import { SignInOptions, SignOutControl } from "./auth-controls";
@@ -169,14 +157,9 @@ function RouteArt() {
   );
 }
 
-export default function Carpool({
-  initialMode = "demo",
-}: {
-  initialMode?: "demo" | "live";
-}) {
+export default function Carpool() {
   const [live, setLive] = useState<Snapshot>(empty);
-  const [demo, setDemo] = useState<Snapshot>(() => demoSnapshot());
-  const [mode, setMode] = useState<"demo" | "live">(initialMode);
+
   const [view, setView] = useState<View>("find");
   const [modal, setModal] = useState<Modal>(null);
   const [menu, setMenu] = useState(false);
@@ -213,38 +196,25 @@ export default function Carpool({
   const [afterProfile, setAfterProfile] = useState<
     "post" | { rideId: string; expectedVersion: number } | null
   >(null);
-  const [demoReports, setDemoReports] =
-    useState<(Report & { isMine?: boolean })[]>(demoSafetyReports);
-  const [demoAppeals, setDemoAppeals] = useState<Appeal[]>([]);
-  const [demoMessages, setDemoMessages] =
-    useState<Record<string, Message[]>>(demoConversations);
-  const discovery = useRideSearch(
-    mode === "live" && view === "find",
-    live.user?.userId,
-    {
-      ...filters,
-      campus: campusFilter,
-      category:
-        category === "Airport runs"
-          ? "airport"
-          : category === "Heading home"
-            ? "home"
-            : "all",
-      sort,
-    },
-  );
-  const s =
-    mode === "demo"
-      ? demo
-      : {
-          ...live,
-          rides: [
-            ...live.rides,
-            ...discovery.rides.filter(
-              (r) => !live.rides.some((p) => p.id === r.id),
-            ),
-          ],
-        };
+
+  const discovery = useRideSearch(view === "find", live.user?.userId, {
+    ...filters,
+    campus: campusFilter,
+    category:
+      category === "Airport runs"
+        ? "airport"
+        : category === "Heading home"
+          ? "home"
+          : "all",
+    sort,
+  });
+  const s = {
+    ...live,
+    rides: [
+      ...live.rides,
+      ...discovery.rides.filter((r) => !live.rides.some((p) => p.id === r.id)),
+    ],
+  };
   const uid = s.user?.userId;
   const chatBooking =
     modal?.type === "chat"
@@ -272,8 +242,6 @@ export default function Carpool({
     if (refreshDiscovery) discovery.reload();
   };
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("mode") === "live")
-      setMode("live");
     refresh()
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -289,25 +257,7 @@ export default function Carpool({
     }, 30000);
     return () => clearInterval(t);
   }, []);
-  const switchMode = (next: "demo" | "live", preserveSearch = false) => {
-    setMode(next);
-    setModal(null);
-    setView("find");
-    setMenu(false);
-    if (preserveSearch) setSearchRevision((v) => v + 1);
-    else {
-      setFilters({ origin: "", destination: "", date: "", seats: 1 });
-      setOrigin("");
-      setDestination("");
-      setDate("");
-      setSeats("1");
-      setSearchRevision(0);
-    }
-    setCategory("All rides");
-    setCampusFilter("");
-    setError("");
-    if (next === "live") refresh().catch((e) => setError(e.message));
-  };
+
   const navigate = (next: View) => {
     setView(next);
     setMenu(false);
@@ -319,156 +269,27 @@ export default function Carpool({
     try {
       const parsed = actionSchema.safeParse(action);
       if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-      if (mode === "demo") {
-        const next = structuredClone(demo);
-        const now = new Date().toISOString();
-        if (parsed.data.action === "post") {
-          next.rides.push({
-            ...parsed.data.ride,
-            id: crypto.randomUUID(),
-            driverId: "demo-you",
-            driverName: demo.profile?.displayName || "You",
-            campus: demo.profile?.campus || "Example University",
-            status: "active",
-            createdAt: now,
-            accepted: 0,
-            version: 1,
-          });
-        } else if (parsed.data.action === "edit") {
-          const edit = parsed.data;
-          const target = next.rides.find((r) => r.id === edit.rideId);
-          if (target && target.version !== edit.expectedVersion)
-            throw new Error("The ride changed. Close the editor and refresh.");
-          if (!target || target.driverId !== uid || target.status !== "active")
-            throw new Error("This ride cannot be edited.");
-          const r = edit.ride;
-          const active = next.bookings.some(
-            (b) =>
-              b.rideId === target.id &&
-              ["pending", "accepted"].includes(b.status),
-          );
-          if (r.seats < target.accepted)
-            throw new Error("Keep enough seats for confirmed riders.");
-          if (
-            active &&
-            (r.origin !== target.origin ||
-              r.destination !== target.destination ||
-              r.departure !== target.departure ||
-              r.priceCents !== target.priceCents)
-          )
-            throw new Error(
-              "Keep the agreed route, time, and price while requests are active.",
-            );
-          Object.assign(target, r);
-          target.version++;
-        } else if (action.action === "request") {
-          const r = next.rides.find((r) => r.id === action.rideId);
-          if (r && r.version !== action.expectedVersion)
-            throw new Error(
-              "The ride changed. Refresh before requesting a seat.",
-            );
-          if (!r || r.driverId === uid || r.accepted >= r.seats)
-            throw new Error("This ride is unavailable.");
-          const existing = next.bookings.find(
-            (b) => b.rideId === r.id && b.riderId === uid,
-          );
-          if (existing && ["pending", "accepted"].includes(existing.status))
-            throw new Error("You already requested this ride.");
-          if (existing) existing.status = "pending";
-          else
-            next.bookings.push({
-              id: crypto.randomUUID(),
-              rideId: r.id,
-              riderId: "demo-you",
-              riderName: demo.profile?.displayName || "You",
-              status: "pending",
-              createdAt: now,
-            });
-        } else if (action.action === "cancelRide") {
-          next.rides.forEach((r) => {
-            if (r.id === action.rideId) {
-              r.status = "cancelled";
-              r.version++;
-            }
-          });
-          next.bookings.forEach((b) => {
-            if (
-              b.rideId === action.rideId &&
-              ["pending", "accepted"].includes(b.status)
-            )
-              b.status = "cancelled";
-          });
-        } else {
-          const b = next.bookings.find((b) => b.id === action.bookingId);
-          if (!b) throw new Error("Request not found.");
-          const r = next.rides.find((r) => r.id === b.rideId)!;
-          if (action.action === "accept" && r.accepted >= r.seats)
-            throw new Error("This ride is full.");
-          b.status =
-            action.action === "accept"
-              ? "accepted"
-              : action.action === "decline"
-                ? "declined"
-                : "cancelled";
-        }
-        next.rides.forEach(
-          (r) =>
-            (r.accepted = next.bookings.filter(
-              (b) => b.rideId === r.id && b.status === "accepted",
-            ).length),
-        );
-        setDemo(next);
-      } else {
-        const res = await fetch("/api/loop", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(action),
-        });
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok) throw new Error(data.error || "Something went wrong.");
-        await refresh();
-      }
-      setNotice(success + (mode === "demo" ? " · Demo only" : ""));
+      const res = await fetch("/api/loop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Something went wrong.");
+      await refresh();
+      setNotice(success);
       setModal(null);
       return true;
     } catch (e) {
-      if (mode === "live") discovery.reload();
+      discovery.reload();
       setError(e instanceof Error ? e.message : "Something went wrong.");
       return false;
     } finally {
       setBusy(false);
     }
   }
-  const demoMatched = demo.rides
-    .filter(
-      (r) =>
-        !campusFilter || r.campus.toLowerCase() === campusFilter.toLowerCase(),
-    )
-    .filter(
-      (r) => r.status === "active" && Date.parse(r.departure) > Date.now(),
-    )
-    .filter(
-      (r) =>
-        r.origin.toLowerCase().includes(filters.origin.toLowerCase()) &&
-        r.destination
-          .toLowerCase()
-          .includes(filters.destination.toLowerCase()) &&
-        (!filters.date || localDate(r.departure) === filters.date) &&
-        r.seats - r.accepted >= filters.seats,
-    )
-    .filter(
-      (r) =>
-        category === "All rides" ||
-        (category === "Airport runs"
-          ? /airport/i.test(r.destination)
-          : !/airport/i.test(r.destination)),
-    )
-    .sort((a, b) =>
-      sort === "price"
-        ? a.priceCents - b.priceCents
-        : Date.parse(a.departure) - Date.parse(b.departure),
-    );
-  const matched = mode === "demo" ? demoMatched : discovery.rides;
+
+  const matched = discovery.rides;
   const selected =
     modal?.type === "ride" ? s.rides.find((r) => r.id === modal.id) : undefined;
   const editingRide =
@@ -496,7 +317,7 @@ export default function Carpool({
   };
   const openPost = () => {
     setError("");
-    if (mode === "live" && uid && !s.profile) {
+    if (uid && !s.profile) {
       setAfterProfile("post");
       setModal({ type: "profile" });
       return;
@@ -509,25 +330,12 @@ export default function Carpool({
     modal?.type === "appeal"
       ? s.rides.find((r) => r.id === modal.rideId)
       : undefined;
-  const campusOptions =
-    mode === "demo"
-      ? Array.from(
-          new Set(demo.rides.map((r) => r.campus).filter(Boolean)),
-        ).sort()
-      : discovery.campuses;
-  async function saveProfile(p: Profile) {
-    if (mode === "demo")
-      setDemo((previous) => ({
-        ...previous,
-        profile: p,
-        user: previous.user
-          ? { ...previous.user, displayName: p.displayName }
-          : null,
-      }));
-    else await refresh();
+  const campusOptions = discovery.campuses;
+  async function saveProfile() {
+    await refresh();
     const next = afterProfile;
     setAfterProfile(null);
-    setNotice("Profile saved" + (mode === "demo" ? " · Demo only" : ""));
+    setNotice("Profile saved");
     if (next === "post") setModal({ type: "post" });
     else if (next)
       await mutate(
@@ -540,107 +348,7 @@ export default function Carpool({
       );
     else setModal(null);
   }
-  function demoResolve(
-    id: string,
-    resolution: "hide" | "dismiss",
-    notes: string,
-  ) {
-    const report = demoReports.find((r) => r.id === id);
-    setDemoReports((previous) =>
-      previous.map((r) =>
-        r.id === id
-          ? { ...r, status: "resolved", resolution, resolutionNotes: notes }
-          : r,
-      ),
-    );
-    if (resolution === "hide" && report?.kind === "message") {
-      setDemoMessages((previous) =>
-        Object.fromEntries(
-          Object.entries(previous).map(([bookingId, messages]) => [
-            bookingId,
-            messages.map((m) =>
-              m.id === report.messageId
-                ? {
-                    ...m,
-                    hidden: true,
-                    body: "Message removed by a moderator.",
-                  }
-                : m,
-            ),
-          ]),
-        ),
-      );
-    } else if (resolution === "hide" && report)
-      setDemo((previous) => ({
-        ...previous,
-        rides: previous.rides.map((r) =>
-          r.id === report.rideId
-            ? {
-                ...r,
-                status: "removed",
-                accepted: 0,
-                removalReportId: report.id,
-                version: r.version + 1,
-              }
-            : r,
-        ),
-        bookings: previous.bookings.map((b) =>
-          b.rideId === report.rideId &&
-          ["pending", "accepted"].includes(b.status)
-            ? { ...b, status: "cancelled" }
-            : b,
-        ),
-      }));
-  }
-  function demoReviewAppeal(
-    id: string,
-    decision: "approve" | "deny",
-    notes: string,
-  ) {
-    const appeal = demoAppeals.find((a) => a.id === id);
-    if (!appeal || appeal.status !== "pending")
-      throw new Error("This appeal was already reviewed.");
-    const ride = demo.rides.find((r) => r.id === appeal.rideId);
-    if (
-      decision === "approve" &&
-      (!ride ||
-        ride.status !== "removed" ||
-        ride.removalReportId !== appeal.removalReportId ||
-        Date.parse(ride.departure) <= Date.now())
-    )
-      throw new Error("The removal changed or the ride is no longer upcoming.");
-    setDemoAppeals((previous) =>
-      previous.map((a) =>
-        a.id === id
-          ? {
-              ...a,
-              status: decision === "approve" ? "approved" : "denied",
-              decisionNotes: notes,
-            }
-          : a,
-      ),
-    );
-    if (decision === "approve") {
-      setDemo((previous) => ({
-        ...previous,
-        rides: previous.rides.map((r) =>
-          r.id === appeal.rideId
-            ? {
-                ...r,
-                status: "active",
-                removalReportId: null,
-                version: r.version + 1,
-              }
-            : r,
-        ),
-      }));
-      setDemoReports((previous) =>
-        previous.map((r) =>
-          r.rideId === appeal.rideId ? { ...r, rideStatus: "active" } : r,
-        ),
-      );
-    }
-  }
+
   return (
     <div className="app-shell">
       <aside className={"sidebar " + (menu ? "is-open" : "")}>
@@ -734,21 +442,6 @@ export default function Carpool({
             <span className="breadcrumb">Your campus. Your people.</span>
           </div>
           <div className="topbar-actions">
-            <div className="mode-switch" aria-label="Data mode">
-              <button
-                className={mode === "demo" ? "chosen" : ""}
-                onClick={() => switchMode("demo")}
-              >
-                Demo
-              </button>
-              <button
-                className={mode === "live" ? "chosen" : ""}
-                onClick={() => switchMode("live")}
-              >
-                Live
-              </button>
-            </div>
-            <span className="topbar-divider" />
             <button
               className="account-control"
               aria-label="Your campus profile"
@@ -763,39 +456,29 @@ export default function Carpool({
               </span>
             </button>
             <span className="account-name">
-              {mode === "demo"
-                ? "Try Loop"
-                : s.user?.displayName.split("@")[0] || "Guest"}
+              {s.user?.displayName.split("@")[0] || "Guest"}
             </span>
-            {mode === "live" && s.user && <SignOutControl config={live.auth} />}
+            {s.user && <SignOutControl config={live.auth} />}
           </div>
         </header>
         <div className="main-content">
-          <div className="demo-banner">
+          <div className="account-banner">
             <span>
               <Sparkles size={15} />
-              {mode === "demo" ? (
-                <>
-                  Demo mode · try posting and booking. Changes reset on reload.
-                </>
-              ) : (
+              {
                 <>
                   Live rides ·{" "}
                   {s.user
                     ? "Your changes are saved to your account."
                     : "Sign in to post a ride or request a seat."}
                 </>
-              )}
+              }
             </span>
-            {mode === "demo" ? (
-              <button onClick={() => switchMode("live")}>
-                Switch to live <ArrowRight size={14} />
-              </button>
-            ) : !s.user ? (
+            {!s.user ? (
               <a
                 href={
                   live.auth?.mode === "sites"
-                    ? "/signin-with-chatgpt?return_to=%2F%3Fmode%3Dlive"
+                    ? "/signin-with-chatgpt?return_to=%2F"
                     : "/signin"
                 }
                 target="_top"
@@ -869,7 +552,7 @@ export default function Carpool({
                     seats: Number(seats),
                   });
                   setSearchRevision((v) => v + 1);
-                  if (mode === "live") discovery.reload();
+                  discovery.reload();
                 }}
               >
                 <label className="search-field">
@@ -940,14 +623,12 @@ export default function Carpool({
                   </select>
                 </label>
                 <button type="submit" className="primary search-submit">
-                  {mode === "live" && discovery.loading ? (
+                  {discovery.loading ? (
                     <LoaderCircle size={18} className="spin" />
                   ) : (
                     <Search size={18} />
                   )}
-                  {mode === "live" && discovery.loading
-                    ? "Searching…"
-                    : "Find a ride"}
+                  {discovery.loading ? "Searching…" : "Find a ride"}
                 </button>
               </form>
               <section
@@ -967,11 +648,7 @@ export default function Carpool({
                         : "Catch your next ride"}
                       <span>.</span>
                     </h2>
-                    <p>
-                      {mode === "demo"
-                        ? "A few examples of where Loop could take you."
-                        : "Find your next trip with a little company."}
-                    </p>
+                    <p>Find your next trip with a little company.</p>
                   </div>
                   <button className="secondary post-top" onClick={openPost}>
                     <Plus size={17} />
@@ -985,13 +662,13 @@ export default function Carpool({
                     aria-atomic="true"
                   >
                     <strong>
-                      {mode === "live" && discovery.loading
+                      {discovery.loading
                         ? "Searching rides…"
-                        : mode === "live" && discovery.error
+                        : discovery.error
                           ? "Search couldn't finish. Please retry below."
                           : matched.length
-                            ? `${matched.length}${mode === "demo" ? " demo" : ""} ${matched.length === 1 ? "ride" : "rides"} ${discovery.hasMore && mode === "live" ? "loaded · more available" : "found"}`
-                            : `No ${mode === "demo" ? "demo " : ""}rides match this search.`}
+                            ? `${matched.length} ${matched.length === 1 ? "ride" : "rides"} ${discovery.hasMore ? "loaded · more available" : "found"}`
+                            : "No rides match this search."}
                     </strong>
                     <span>
                       {filters.origin || "Any pickup"} →{" "}
@@ -1001,21 +678,6 @@ export default function Carpool({
                         : " · Any date"}
                       {` · ${filters.seats}+ ${filters.seats === 1 ? "seat" : "seats"}`}
                     </span>
-                    {mode === "demo" && (
-                      <>
-                        <p>
-                          Demo searches sample trips and rides you post in this
-                          demo. Changes reset on reload. Live searches saved
-                          member listings.
-                        </p>
-                        <button
-                          className="text-button"
-                          onClick={() => switchMode("live", true)}
-                        >
-                          Search live rides <ArrowRight size={14} />
-                        </button>
-                      </>
-                    )}
                   </div>
                 )}
                 <div className="filterbar">
@@ -1068,9 +730,9 @@ export default function Carpool({
                   aria-live={searchRevision ? "off" : "polite"}
                 >
                   <span>
-                    {matched.length} {mode === "demo" ? "demo " : ""}
+                    {matched.length}{" "}
                     {matched.length === 1 ? "ride" : "rides"}{" "}
-                    {mode === "live" && discovery.hasMore
+                    {discovery.hasMore
                       ? "loaded · more available"
                       : "available"}
                   </span>
@@ -1080,7 +742,7 @@ export default function Carpool({
                     </button>
                   )}
                 </div>
-                {mode === "live" && discovery.error && (
+                {discovery.error && (
                   <div className="error-banner" role="alert">
                     {discovery.error}
                     <button className="text-button" onClick={discovery.reload}>
@@ -1088,13 +750,12 @@ export default function Carpool({
                     </button>
                   </div>
                 )}
-                {mode === "live" && (loading || discovery.loading) ? (
+                {loading || discovery.loading ? (
                   <div className="empty-state">
                     <LoaderCircle className="spin" />
                     Loading rides…
                   </div>
-                ) : mode === "live" &&
-                  discovery.error &&
+                ) : discovery.error &&
                   !matched.length ? null : matched.length ? (
                   <div className="ride-grid">
                     {matched.map((r, i) => (
@@ -1123,9 +784,7 @@ export default function Carpool({
                     </h3>
                     <p>
                       {activeFilter
-                        ? mode === "demo"
-                          ? "No rides in this demo match your filters. Clear filters or search live rides above. Demo posts reset on reload."
-                          : "No posted rides match these filters. Try another location or date, or clear filters."
+                        ? "No posted rides match these filters. Try another location or date, or clear filters."
                         : "Post a ride and give someone a way home."}
                     </p>
                     <button
@@ -1136,7 +795,7 @@ export default function Carpool({
                     </button>
                   </div>
                 )}
-                {mode === "live" && discovery.hasMore && (
+                {discovery.hasMore && (
                   <div className="load-more">
                     <button
                       className="secondary"
@@ -1510,18 +1169,14 @@ export default function Carpool({
             </div>
           )}
           {modal.type === "profile" &&
-            (mode === "live" && !uid ? (
+            (!uid ? (
               <SignInPrompt auth={live.auth} />
             ) : (
-              <ProfileForm
-                profile={s.profile || null}
-                demo={mode === "demo"}
-                onSaved={saveProfile}
-              />
+              <ProfileForm profile={s.profile || null} onSaved={saveProfile} />
             ))}
           {(modal.type === "report" || modal.type === "message-report") &&
             reportRide &&
-            (mode === "live" && !uid ? (
+            (!uid ? (
               <SignInPrompt auth={live.auth} />
             ) : (
               <ReportForm
@@ -1530,79 +1185,20 @@ export default function Carpool({
                 targetMessage={
                   modal.type === "message-report" ? modal.message : undefined
                 }
-                demo={mode === "demo"}
-                onSubmit={(reason, details) => {
-                  if (
-                    demoReports.some(
-                      (r) =>
-                        r.isMine &&
-                        (modal.type === "message-report"
-                          ? r.messageId === modal.message.id
-                          : r.rideId === reportRide.id && r.kind !== "message"),
-                    )
-                  )
-                    throw new Error(
-                      "You already reported this ride. Track its status in My reports.",
-                    );
-                  setDemoReports((previous) => [
-                    {
-                      id: crypto.randomUUID(),
-                      rideId: reportRide.id,
-                      kind:
-                        modal.type === "message-report" ? "message" : "ride",
-                      messageId:
-                        modal.type === "message-report"
-                          ? modal.message.id
-                          : undefined,
-                      messageText:
-                        modal.type === "message-report"
-                          ? modal.message.body
-                          : undefined,
-                      messageSenderName:
-                        modal.type === "message-report"
-                          ? modal.message.senderName
-                          : undefined,
-                      reason,
-                      details,
-                      status: "open",
-                      resolution: null,
-                      resolutionNotes: null,
-                      createdAt: new Date().toISOString(),
-                      origin: reportRide.origin,
-                      destination: reportRide.destination,
-                      driverName: reportRide.driverName,
-                      isMine: true,
-                    },
-                    ...previous,
-                  ]);
-                }}
                 onSaved={() => {
                   setModal(null);
-                  setNotice(
-                    "Report submitted. Track it in My reports." +
-                      (mode === "demo" ? " · Demo only" : ""),
-                  );
+                  setNotice("Report submitted. Track it in My reports.");
                 }}
               />
             ))}
           {modal.type === "reports" &&
-            (mode === "live" && !uid ? (
+            (!uid ? (
               <SignInPrompt auth={live.auth} />
             ) : (
               <ReviewCenter
                 isModerator={!!s.isModerator}
-                demoReports={
-                  mode === "demo"
-                    ? { reports: demoReports, resolve: demoResolve }
-                    : undefined
-                }
-                demoAppeals={
-                  mode === "demo"
-                    ? { appeals: demoAppeals, review: demoReviewAppeal }
-                    : undefined
-                }
                 onChanged={async () => {
-                  if (mode === "live") await refresh();
+                  await refresh();
                 }}
               />
             ))}
@@ -1610,54 +1206,18 @@ export default function Carpool({
             <AppealForm
               rideId={reportRide.id}
               destination={reportRide.destination}
-              demo={mode === "demo"}
-              onSubmit={(details) => {
-                if (
-                  reportRide.status !== "removed" ||
-                  !reportRide.removalReportId ||
-                  demoAppeals.some(
-                    (a) =>
-                      a.rideId === reportRide.id &&
-                      a.removalReportId === reportRide.removalReportId,
-                  )
-                )
-                  throw new Error(
-                    "This removal was already appealed, or the ride changed.",
-                  );
-                setDemoAppeals((previous) => [
-                  {
-                    id: crypto.randomUUID(),
-                    rideId: reportRide.id,
-                    removalReportId: reportRide.removalReportId!,
-                    driverName: reportRide.driverName,
-                    origin: reportRide.origin,
-                    destination: reportRide.destination,
-                    details,
-                    status: "pending",
-                    decisionNotes: null,
-                    createdAt: new Date().toISOString(),
-                  },
-                  ...previous,
-                ]);
-              }}
               onSaved={() => {
                 setModal(null);
                 setNotice(
-                  "Appeal submitted. Track it under Reports & review → Ride appeals." +
-                    (mode === "demo" ? " · Demo only" : ""),
+                  "Appeal submitted. Track it under Reports & review → Ride appeals.",
                 );
               }}
             />
           )}
-          {mode === "demo" && modal.type !== "help" && (
-            <div className="modal-demo">
-              <Sparkles size={14} />
-              Demo mode · changes reset when you reload.
-            </div>
-          )}
+
           {modal.type === "chat" && chatBooking && chatRide && uid && (
             <TripChat
-              key={chatBooking.id + mode}
+              key={chatBooking.id}
               bookingId={chatBooking.id}
               userId={uid}
               title={`${endName(chatRide.origin)} → ${endName(chatRide.destination)}`}
@@ -1674,28 +1234,10 @@ export default function Carpool({
                   message,
                 });
               }}
-              demo={
-                mode === "demo"
-                  ? {
-                      messages: demoMessages[chatBooking.id] || [],
-                      canSend:
-                        chatBooking.status === "accepted" &&
-                        chatRide.status === "active",
-                      send: (m) =>
-                        setDemoMessages((previous) => ({
-                          ...previous,
-                          [chatBooking.id]: [
-                            ...(previous[chatBooking.id] || []),
-                            m,
-                          ],
-                        })),
-                    }
-                  : undefined
-              }
             />
           )}
           {modal.type === "post" &&
-            (mode === "live" && !uid ? (
+            (!uid ? (
               <SignInPrompt auth={live.auth} />
             ) : (
               <PostForm
@@ -1792,7 +1334,7 @@ export default function Carpool({
               </p>
               {selected.status !== "active" ||
               Date.parse(selected.departure) <= Date.now() ? (
-                <div className="modal-demo">
+                <div className="ride-status-notice">
                   This ride is{" "}
                   {selected.status !== "active"
                     ? selected.status === "removed"
@@ -1806,7 +1348,7 @@ export default function Carpool({
                   <CheckCircle2 size={18} />
                   You’re driving this ride. Review seat requests in Requests.
                 </div>
-              ) : mode === "live" && !uid ? (
+              ) : !uid ? (
                 <SignInPrompt auth={live.auth} />
               ) : myBooking &&
                 ["pending", "accepted"].includes(myBooking.status) ? (
@@ -1826,7 +1368,7 @@ export default function Carpool({
                   className="primary full"
                   disabled={busy || selected.accepted >= selected.seats}
                   onClick={() =>
-                    mode === "live" && !s.profile
+                    !s.profile
                       ? (setAfterProfile({
                           rideId: selected.id,
                           expectedVersion: selected.version,
@@ -1989,19 +1531,6 @@ export default function Carpool({
                   confirmation. Payments are arranged outside Loop.
                 </p>
               </div>
-              <button
-                className="secondary full"
-                onClick={() => {
-                  setDemo(demoSnapshot());
-                  setDemoMessages(demoConversations());
-                  setDemoReports(demoSafetyReports());
-                  setDemoAppeals([]);
-                  switchMode("demo");
-                  setNotice("Demo reset. Try requesting or approving a seat.");
-                }}
-              >
-                Reset and explore demo
-              </button>
             </div>
           )}
         </Dialog>

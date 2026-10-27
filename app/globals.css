@@ -244,31 +244,6 @@ button {
   gap: 11px;
   align-items: center;
 }
-.mode-switch {
-  display: flex;
-  background: #eff1e8;
-  border-radius: 7px;
-  padding: 3px;
-  gap: 2px;
-}
-.mode-switch button {
-  font-size: 11px;
-  padding: 6px 12px;
-  border-radius: 5px;
-  background: transparent;
-  color: #7c8478;
-}
-.mode-switch .chosen {
-  background: #fff;
-  box-shadow: 0 1px 4px #20302012;
-  color: var(--green);
-  font-weight: 700;
-}
-.topbar-divider {
-  height: 23px;
-  border-left: 1px solid var(--line);
-  margin: 0 9px;
-}
 .account-name {
   font-size: 12px;
   max-width: 130px;
@@ -314,7 +289,7 @@ button {
   padding: 24px 48px 0;
   margin: auto;
 }
-.demo-banner {
+.account-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -324,18 +299,18 @@ button {
   margin-bottom: 23px;
   min-height: 23px;
 }
-.demo-banner > span,
-.demo-banner button,
-.demo-banner a {
+.account-banner > span,
+.account-banner button,
+.account-banner a {
   display: flex;
   align-items: center;
   gap: 7px;
 }
-.demo-banner > span > svg {
+.account-banner > span > svg {
   color: #a19363;
 }
-.demo-banner button,
-.demo-banner a {
+.account-banner button,
+.account-banner a {
   background: transparent;
   padding: 0;
   color: var(--green);
@@ -501,7 +476,7 @@ h1 {
   padding: 13px 14px 9px;
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: .3px;
+  letter-spacing: 0.3px;
   color: #7c8876;
 }
 .location-options {
@@ -1156,7 +1131,7 @@ h2 > span,
   border: 1px solid var(--line);
   border-radius: 50%;
 }
-.modal-demo {
+.ride-status-notice {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1546,15 +1521,15 @@ h2 > span,
     gap: 12px;
     flex-wrap: wrap;
   }
-  .demo-banner {
+  .account-banner {
     font-size: 10px;
     align-items: flex-start;
   }
-  .demo-banner > span {
+  .account-banner > span {
     align-items: flex-start;
     line-height: 1.7;
   }
-  .demo-banner button {
+  .account-banner button {
     font-size: 9px;
     padding-top: 2px;
   }
@@ -1641,24 +1616,21 @@ h2 > span,
   .topbar-actions {
     gap: 6px;
   }
-  .topbar-divider {
-    margin: 0 4px;
-  }
   .main-content {
     padding: 15px 18px 0;
   }
-  .demo-banner {
+  .account-banner {
     gap: 12px;
     margin-bottom: 16px;
   }
-  .demo-banner > span {
+  .account-banner > span {
     font-size: 9px;
   }
-  .demo-banner > span > svg {
+  .account-banner > span > svg {
     width: 13px;
   }
-  .demo-banner button,
-  .demo-banner a {
+  .account-banner button,
+  .account-banner a {
     font-size: 9px;
   }
   .hero {

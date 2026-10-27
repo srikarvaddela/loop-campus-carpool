@@ -2,21 +2,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { CheckCircle2, LoaderCircle, RefreshCw, Scale } from "lucide-react";
 import type { Appeal } from "../lib/types";
-import { ReportsPanel, type DemoReports } from "./community-panels";
+import { ReportsPanel } from "./community-panels";
 
-export type DemoAppeals = {
-  appeals: Appeal[];
-  review: (id: string, decision: "approve" | "deny", notes: string) => void;
-};
 export function ReviewCenter({
   isModerator,
-  demoReports,
-  demoAppeals,
   onChanged,
 }: {
   isModerator: boolean;
-  demoReports?: DemoReports;
-  demoAppeals?: DemoAppeals;
   onChanged: () => void | Promise<void>;
 }) {
   const [tab, setTab] = useState("reports");
@@ -37,17 +29,9 @@ export function ReviewCenter({
         </button>
       </div>
       {tab === "reports" ? (
-        <ReportsPanel
-          isModerator={isModerator}
-          demo={demoReports}
-          onChanged={onChanged}
-        />
+        <ReportsPanel isModerator={isModerator} onChanged={onChanged} />
       ) : (
-        <AppealsPanel
-          isModerator={isModerator}
-          demo={demoAppeals}
-          onChanged={onChanged}
-        />
+        <AppealsPanel isModerator={isModerator} onChanged={onChanged} />
       )}
     </>
   );
@@ -56,14 +40,10 @@ export function ReviewCenter({
 export function AppealForm({
   rideId,
   destination,
-  demo,
-  onSubmit,
   onSaved,
 }: {
   rideId: string;
   destination: string;
-  demo: boolean;
-  onSubmit?: (details: string) => void;
   onSaved: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -74,17 +54,14 @@ export function AppealForm({
     setError("");
     const details = String(new FormData(e.currentTarget).get("details")).trim();
     try {
-      if (demo) onSubmit?.(details);
-      else {
-        const res = await fetch("/api/appeals", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "submit", rideId, details }),
-        });
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok)
-          throw new Error(data.error || "Couldn't submit your appeal.");
-      }
+      const res = await fetch("/api/appeals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "submit", rideId, details }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok)
+        throw new Error(data.error || "Couldn't submit your appeal.");
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't submit your appeal.");
@@ -139,16 +116,14 @@ export function AppealForm({
 
 function AppealsPanel({
   isModerator,
-  demo,
   onChanged,
 }: {
   isModerator: boolean;
-  demo?: DemoAppeals;
   onChanged: () => void | Promise<void>;
 }) {
   const [review, setReview] = useState(false);
   const [appeals, setAppeals] = useState<Appeal[]>([]);
-  const [loading, setLoading] = useState(!demo);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   async function load() {
@@ -160,7 +135,6 @@ function AppealsPanel({
     setAppeals(data.appeals);
   }
   useEffect(() => {
-    if (demo) return;
     let active = true;
     setLoading(true);
     setError("");
@@ -182,7 +156,7 @@ function AppealsPanel({
     return () => {
       active = false;
     };
-  }, [review, !!demo]);
+  }, [review]);
   async function decide(e: FormEvent<HTMLFormElement>, id: string) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -191,22 +165,19 @@ function AppealsPanel({
     setBusy(id);
     setError("");
     try {
-      if (demo) demo.review(id, decision, notes);
-      else {
-        const res = await fetch("/api/appeals", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "review",
-            appealId: id,
-            decision,
-            notes,
-          }),
-        });
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok) throw new Error(data.error || "Couldn't review appeal.");
-        await load();
-      }
+      const res = await fetch("/api/appeals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "review",
+          appealId: id,
+          decision,
+          notes,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Couldn't review appeal.");
+      await load();
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't review appeal.");
@@ -214,7 +185,7 @@ function AppealsPanel({
       setBusy("");
     }
   }
-  const shown = demo ? demo.appeals : appeals;
+  const shown = appeals;
   return (
     <section>
       <div className="pills">
@@ -232,7 +203,7 @@ function AppealsPanel({
             Appeal queue
           </button>
         )}
-        {!demo && (
+        {
           <button
             className="icon-button"
             aria-label="Refresh appeals"
@@ -244,7 +215,7 @@ function AppealsPanel({
           >
             <RefreshCw size={15} />
           </button>
-        )}
+        }
       </div>
       <p className="reports-intro">
         {review
